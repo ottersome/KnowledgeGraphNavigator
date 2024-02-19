@@ -3,26 +3,44 @@ Scripting for loading the data
 """
 import os
 
-from rdflib import Graph
+from SPARQLWrapper import JSON, SPARQLWrapper
 
 # Load DBPedia and Wikipedia Together
 
+# Define the Fuseki server endpoint
 
-def explore_ttl_data(meep):
+
+def explore_ttl_data(endpoint: str):
     """
     Use Parql
     """
-    pass
+    sparql = SPARQLWrapper(fuseki_endpoint)
+    # Define your SPARQL query
+    query = """
+    PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+    PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+    SELECT ?subject ?predicate ?object
+    WHERE {
+      ?subject ?predicate ?object
+    }
+    LIMIT 10
+    """
+    # Set the query to the SPARQLWrapper
+    sparql.setQuery(query)
+    # Select the return format (e.g., JSON or XML)
+    sparql.setReturnFormat(JSON)
+    # Execute the query and convert the response to a Python dictionary
+    try:
+        response = sparql.query().convert()
+        for result in response["results"]["bindings"]:  # type:ignore
+            print(result)
+    except Exception as e:
+        print(f"An error occurred: {e}")
 
 
-if __name__ == "__main__":
-    # Take args
-    import sys
-
-    args = sys.argv
-    if len(args) < 2:
-        raise ValueError("Please provide the path to the data")
-    file_path = args[1]
+def explore_local(
+    file_path: str,
+):
     cwd = os.getcwd()
     full_path = os.path.join(cwd, file_path)
     if not os.path.exists(full_path) or not file_path.endswith("ttl"):
@@ -37,9 +55,15 @@ if __name__ == "__main__":
            WHERE {
            ?subject ?predicate ?object .
            } LIMIT 10
-    """
+        """
     )
     for row in qres:
         print(f"S: {row.subject} P: {row.predicate} O: {row.object}")  # type:ignore
 
-    print("Loading file: ")
+
+if __name__ == "__main__":
+    # Take args
+    # Take the
+    fuseki_endpoint = "http://localhost:3030/wiki_tdb/query"
+
+    explore_ttl_data(fuseki_endpoint)
