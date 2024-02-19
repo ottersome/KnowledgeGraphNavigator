@@ -19,9 +19,11 @@ def explore_ttl_data(endpoint: str):
     query = """
     PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
     PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+    PREFIX wiki: <https://en.wikipedia.org/wiki/>
+    PREFIX 
     SELECT ?subject ?predicate ?object
     WHERE {
-      ?subject ?predicate ?object
+       ?predicate ?object
     }
     LIMIT 10
     """
