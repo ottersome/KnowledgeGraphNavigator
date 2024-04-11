@@ -4,7 +4,7 @@ import os
 
 from transformers import AutoTokenizer
 
-from kgraphs.data.data import BasicDataset, DatasetFactory
+from kgraphs.dataprocessing.data import BasicDataset, DatasetFactory
 from kgraphs.utils.logging import create_logger
 
 # %% Some global initalization
@@ -16,7 +16,7 @@ def argsies():
     ap.add_argument("--dataset_name", default="manu/project_gutenberg")
     ap.add_argument("--tokenizer_name", default="facebook/bart-base")
     ap.add_argument("--model_tokenwindow_size", default=1024)
-    ap.add_argument("--token_count_cap", default=1000000)
+    ap.add_argument("--token_count_cap", default=10000)
 
     return ap.parse_args()
 
