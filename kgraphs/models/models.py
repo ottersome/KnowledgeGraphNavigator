@@ -5,18 +5,18 @@ from torch import nn
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, d_model, num_heads):
+    def __init__(self, model_dim, num_heads):
         super(MultiHeadAttention, self).__init__()
-        assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
+        assert model_dim % num_heads == 0, "d_model must be divisible by num_heads"
 
-        self.d_model = d_model
+        self.d_model = model_dim
         self.num_heads = num_heads
-        self.d_k = d_model // num_heads
+        self.d_k = model_dim // num_heads
 
-        self.W_q = nn.Linear(d_model, d_model)
-        self.W_k = nn.Linear(d_model, d_model)
-        self.W_v = nn.Linear(d_model, d_model)
-        self.W_o = nn.Linear(d_model, d_model)
+        self.W_q = nn.Linear(model_dim, model_dim)
+        self.W_k = nn.Linear(model_dim, model_dim)
+        self.W_v = nn.Linear(model_dim, model_dim)
+        self.W_o = nn.Linear(model_dim, model_dim)
 
     def scaled_dot_product_attention(self, Q, K, V, mask=None):
         attn_scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.d_k)
@@ -122,7 +122,7 @@ class Transformer(nn.Module):
         d_ff,
         max_seq_length,
         dropout,
-        pretrained_embedding: str,
+        pretrained_embedding: torch.Tensor,
     ):
         super(Transformer, self).__init__()
 

@@ -1,7 +1,10 @@
 import json
 import os
+import posix
+import re
 from logging import DEBUG
-from typing import Any, List, Tuple
+from pathlib import Path
+from typing import Any, Iterable, List, Tuple
 
 import pandas as pd
 from datasets import load_dataset
@@ -97,10 +100,46 @@ def strip_headers(text):
     return sep.join(out)
 
 
+# Lets create an iterable class that will take in :
+# either a file diretory list or a return from `load_dataset`
+# and *yield* text within them
+class TextStream(Iterable):
+    def __init__(self, dataset_iter: Iterable[Any]):
+        self.dataset_iter = dataset_iter
+        # HACK: but meh:
+        first_item = next(iter(self.dataset_iter))
+        self.local = False
+        try:
+            "text" in first_item  # type:ignore
+        except:
+            self.local = True
+
+    def __iter__(self):
+        # Check if it is an iterable of str or the one provided by load_dataset
+        print("THE INSTANCE IS ", type(self.dataset_iter))
+        if self.local:
+            for filepath in self.dataset_iter:
+                with open(filepath, "r") as f:
+                    yield f.read()
+        else:
+            for doc in self.dataset_iter:
+                yield doc["text"]
+
+
+# DatasetFactory
 class DatasetFactory:
     CACHE_RELPATH = "./.cache/datasets/"
     SUPP_CTX_LEN = 128  # Supplementary Context Length
     CACHE_FORMAT = "{split}_{split_percent}_tknCap{token_cap}.parquet"
+    SPACE_PERC_THRESH = 0.1
+    MAX_INTRASPACE_THRESHOLD = 5
+    MIN_NUMBER_WORDS = 15
+    REMOVE_REGEXES = [
+        r"(?i)^\s*(Chapter|Section|Part)\s+\w+",  # Headings
+        r"^\s*\d+(\.\d+)*\s+.*$",  # Numerical Patterns
+        r"^\s*(M{0,4}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3}))\s*$",  # Roman Numerals
+        r"\[\d+\]",  # References
+    ]
 
     def __init__(
         self,
@@ -109,6 +148,8 @@ class DatasetFactory:
         window_size: int,
         amnt_tkns_for_training: int = -1,
         split: Tuple = (0.85, 0.15, 0),
+        ds_location: str = "",
+        stream: bool = False,
     ):
         """
         dataset_name: usually just the same one
@@ -119,10 +160,18 @@ class DatasetFactory:
         """
 
         self.logger = create_logger(__class__.__name__, DEBUG)
+        self.ds_location = ds_location
         self.dataset_name = dataset_name
         self.window_size = window_size
         self.tknzr = ptrnd_tknzr
         self.split = split
+        self.stream = stream
+
+        if ds_location != "" and self.stream == True:
+            self.logger.warn(
+                f"You have provided ds_location {ds_location}, yet are using `self.stream"
+                f"Local dataset location {ds_location} will be ignored"
+            )
 
         # Token Cap is semantically for training so we pull the rest as:
         self.amnt_tkns_for_trning = amnt_tkns_for_training
@@ -175,28 +224,44 @@ class DatasetFactory:
         else:
             self._compute_ds()
 
+    def _initialize_regex(self) -> List[re.Pattern]:
+        return [re.compile(r) for r in self.REMOVE_REGEXES]
+
+    def get_dataset_iter(self) -> Iterable[Any]:
+        if self.stream:
+            return TextStream(
+                load_dataset(self.dataset_name, split="en", streaming=True)
+            )
+        else:
+            return TextStream(Path(self.ds_location).iterdir())
+
     def _compute_ds(self):
         """
         💫
         Assume we always load in the same order.
         """
-        dataset_iter = load_dataset(self.dataset_name, split="en", streaming=True)
+        dataset_iter = self.get_dataset_iter()
         train: List[List[int]] = []
         cap = 2
         f = open("./dumpy.log", "w")
         b = tqdm(total=cap + 1)
         self.cur_amount_of_tokens = 0
+
+        clean_regexes = self._initialize_regex()
+
         for i, doc in enumerate(dataset_iter):
             if self.cur_amount_of_tokens > self.amnt_tkns_for_trning:
                 break
 
-            new_list = self._doc(doc["text"], b)  # type:ignore
+            new_list = self._doc(doc, b, clean_regexes)  # type:ignore
             new_list_size = len(new_list)
             self.logger.debug(f"Have added {new_list_size} windows to our dataset")
             train += new_list  # type:ignore
             b.set_description(f"Added {len(train)} docs")
             b.update(1)
+            break
         # List to pretty, indent json
+        self.logger.info(f"Final Train boi is \n{train}")
         pretty_list = json.dumps(train, indent=4)
         f.write(pretty_list)
         # Dump all the train list
@@ -208,7 +273,41 @@ class DatasetFactory:
         # TODO: finish
         # df.to_parquet(
 
-    def _doc(self, doc: str, bar: tqdm):
+    def _clean_segment(self, segment: str, removal_rgxs: List[re.Pattern]) -> str:
+        tot_len = len(segment)
+
+        ### Miscelannea Round
+
+        # Count amount of words
+        if tot_len < self.MIN_NUMBER_WORDS:
+            return ""
+
+        # Count amount of spaces in this string
+        count_spaces = segment.count(" ")
+        if (count_spaces / tot_len) > self.SPACE_PERC_THRESH:
+            return ""
+
+        # Check if spaces are too often close to each other
+        # (Like in table of contents)
+        max_space = 0
+        for word in segment.split(" "):
+            if word == "":
+                max_space += 1
+            if max_space > self.MAX_INTRASPACE_THRESHOLD:
+                return ""
+
+        ###  Regex round
+        for r in removal_rgxs:
+            segment = r.sub("", segment)
+
+        ########################################
+        # Looks clean, final touches
+        ########################################
+        final_segment = segment.strip()
+
+        return final_segment
+
+    def _doc(self, doc: str, bar: tqdm, clean_regexs: List[re.Pattern]):
         # Just dump the boook so I can see what it lopoks like for now
         with open("book.log", "w") as f:
             f.write(doc)
@@ -218,51 +317,44 @@ class DatasetFactory:
             f.write(doc)
 
         self.logger.debug(f"Finding ourselves in _doc")
-        segments = doc.split("\n")
-        tkd_segs = [
-            self.tknzr.encode(s.strip(), add_special_tokens=False) for s in segments
-        ]
-
-        self.logger.debug(f"With {len(segments)} segments split by \\n")
-        bar.set_description(f"Working document with {len(segments)}")
 
         token_windows = []
-        cur_segidx = 0
-        cur_subsegidx = 0
 
-        while (
-            cur_segidx < len(tkd_segs)
-            and self.cur_amount_of_tokens <= self.amnt_tkns_for_trning
-        ):
-            # Some Segments are emtpy
-            if len(tkd_segs[cur_segidx]) == 0:
-                cur_segidx += 1
+        cur_segidx = 0
+        cur_offset = 0
+
+        # for segment in segments:
+        while cur_offset < len(doc):
+            ## Cleaning
+            clean_segment = self._clean_segment(segment, clean_regexs)
+            # Segment is invalid
+            if clean_segment == "":
                 continue
 
-            self.logger.debug(
-                f"In loop with cur_segidx {cur_segidx} and cur_subsegidx {cur_subsegidx}"
-                f" and {self.cur_amount_of_tokens} cur_amount_of_tokens"
-            )
+            # Tokenize the segment
+            tkd_seg = self.tknzr.encode(clean_segment, add_special_tokens=False)
+            cur_subsegidx = 0
 
+            # self.logger.debug(
+            #     f"In loop with cur_segidx {cur_segidx} and cur_subsegidx {cur_subsegidx}"
+            #     f" and {self.cur_amount_of_tokens} cur_amount_of_tokens"
+            # )
+
+            # ## Space Allocation
             review_bias = 0 if cur_subsegidx <= self.SUPP_CTX_LEN else self.SUPP_CTX_LEN
             beg = cur_subsegidx - review_bias
 
             tope = min(
-                len(tkd_segs[cur_segidx]) - 1,
-                cur_subsegidx - review_bias + self.window_size,
+                len(tkd_seg) - 1,
+                (cur_subsegidx - review_bias) + self.window_size,
             )
 
-            cur_window = tkd_segs[cur_segidx][beg:tope]
+            cur_window = tkd_seg[beg:tope]
             cur_window_debug = self.tknzr.convert_ids_to_tokens(cur_window)
             pair = [f"{a} - {b}" for a, b in zip(cur_window, cur_window_debug)]
             token_windows.append(pair)
-            # TODO: Change this to count actual tokens
             self.cur_amount_of_tokens += len(cur_window)
-
             cur_subsegidx += self.window_size
-            if tope == len(tkd_segs[cur_segidx]) - 1:
-                cur_segidx += 1
-                cur_subsegidx = 0
 
         self.logger.debug(
             f"Wrapping up with the amount of tokens {self.cur_amount_of_tokens}"
@@ -270,8 +362,8 @@ class DatasetFactory:
 
         return token_windows
 
-    def getDatasets(self) -> BasicDataset:
-        pass
+    # def getDatasets(self) -> BasicDataset:
+    #     pass
 
     def save_tknized_in_local_cache(self):
         pass
