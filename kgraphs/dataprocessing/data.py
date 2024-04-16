@@ -1,12 +1,13 @@
 import copy
 import json
 import os
-import posix
 import re
+from collections import defaultdict
 from logging import DEBUG
 from pathlib import Path
 from typing import Any, Iterable, Iterator, List, Tuple
 
+import numpy as np
 import pandas as pd
 from datasets import load_dataset
 from torch.utils.data import DataLoader, Dataset
@@ -134,9 +135,11 @@ class DatasetFactory:
     CACHE_FORMAT = "{split}_{split_percent}_tknCap{token_cap}.parquet"
 
     SPACE_PERC_THRESH = 0.1
+    NUM_FILES_TO_CACHE_INTO = 100
     MAX_INTRASPACE_THRESHOLD = 5
     MIN_NUMBER_WORDS = 15
     WINDOW_OVERLAP = 128  # CHECK: implement if necessary
+    GARBAGE_COLLECTION_THRESHOLD = 900
     REMOVE_REGEXES = [
         r"(?i)^\s*(Chapter|Section|Part)\s+\w+",  # Headings
         r"^\s*\d+(\.\d+)*\s+.*$",  # Numerical Patterns
@@ -238,6 +241,25 @@ class DatasetFactory:
         else:
             return TextStream(Path(self.ds_location).iterdir())
 
+    def _garbage_collection(self, ds: List[List[int]]):
+        self.logger.debug(f"Performing garbage collection with list of size {len(ds)}")
+        num_samples = len(ds)
+        cache_path = Path(self.CACHE_RELPATH)
+        cache_path.mkdir(parents=True, exist_ok=True)
+        assign_file = np.random.randint(
+            low=0, high=self.NUM_FILES_TO_CACHE_INTO, size=(num_samples,)
+        ).tolist()
+        file_to_sampleidx = defaultdict(list)
+        for i, a in enumerate(assign_file):
+            file_to_sampleidx[a].append(i)
+
+        for file_idx, lista in file_to_sampleidx.items():
+            filecache_path = cache_path / f"part_{file_idx}.txt"
+            with open(filecache_path, "a") as f:
+                for idx in lista:
+                    f.write(json.dumps(ds[idx]) + "\n")
+        self.logger.debug("Carbage Collection Done")
+
     def _compute_ds(self):
         """
         💫
@@ -246,11 +268,12 @@ class DatasetFactory:
         dataset_iter = self.get_dataset_iter()
         train: List[List[int]] = []
         cap = 2
-        f = open("./dumpy.log", "w")
+        # f = open("./dumpy.log", "w")# DEBUG: remove
         b = tqdm(total=cap + 1)
         self.cur_amount_of_tokens = 0
 
         clean_regexes = self._initialize_regex()
+        windows_added = 0
 
         for i, doc in enumerate(dataset_iter):
             if self.cur_amount_of_tokens > self.amnt_tkns_for_trning:
@@ -258,18 +281,23 @@ class DatasetFactory:
 
             new_list = self._doc(doc, b, clean_regexes)  # type:ignore
             new_list_size = len(new_list)
-            self.logger.debug(f"Have added {new_list_size} windows to our dataset")
+            # self.logger.debug(f"Have added {new_list_size} windows to our dataset")
             train += new_list  # type:ignore
-            b.set_description(f"Added {len(train)} docs")
+            windows_added += len(new_list)
+            b.set_description(f"Added {windows_added} docs")
             b.update(1)
-            break
+
+            # Spread into the self.FILES_TO_CACHE_INTO
+            if len(train) >= self.GARBAGE_COLLECTION_THRESHOLD:
+                b.set_description(f"Garbage Collectin")
+                self._garbage_collection(train)
+                train.clear()
 
         # List to pretty, indent json
-        self.logger.info(f"Final Train boi is \n{train}")
-        pretty_list = json.dumps(train, indent=4)
-        f.write(pretty_list)
-        # Dump all the train list
-        f.close()
+        # self.logger.info(f"Final Train boi is \n{train}")
+        # pretty_list = json.dumps(train, indent=4) # DEBUG: remove
+        # f.write(pretty_list)
+        # f.close()
         # Once that is all good we cache it in some parquet file
 
     def _cache_tokenized(self, samples_list):
@@ -361,16 +389,16 @@ class DatasetFactory:
             yield return_tokens
         # Generator is done
 
-    def _doc(self, doc: str, bar: tqdm, clean_regexs: List[re.Pattern]):
+    def _doc(
+        self, doc: str, bar: tqdm, clean_regexs: List[re.Pattern]
+    ) -> List[List[int]]:
         # Just dump the boook so I can see what it lopoks like for now
-        with open("book.log", "w") as f:
-            f.write(doc)
+        # with open("book.log", "w") as f:
+        #     f.write(doc) # DEBUG: remove
 
         doc = strip_headers(doc)
-        with open("stripped_book.log", "w") as f:
-            f.write(doc)
-
-        self.logger.debug(f"Finding ourselves in _doc :[")
+        # with open("stripped_book.log", "w") as f:
+        #     f.write(doc) # DEBUG: remove
 
         doc_tokenizer = self._doc_to_window_iterator(doc, clean_regexs)
 
@@ -378,12 +406,10 @@ class DatasetFactory:
 
         # While we can iterate over doc_tokenizer
         tkn_win_iterator = doc_tokenizer
-        self.logger.debug("Amout to start parsing these bois")
         for tkn_win in tkn_win_iterator:
             ## Cleaning
-            self.logger.debug(f"Added token window of size {len(tkn_win)}")
+            # self.logger.debug(f"Added token window of size {len(tkn_win)}")
             token_windows.append(tkn_win)
-        self.logger.debug("Done parsing these bois")
         return token_windows
 
     def save_tknized_in_local_cache(self):

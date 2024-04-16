@@ -7,10 +7,10 @@ def create_logger(name, level=logging.INFO):
     file_dir = os.path.join(log_dir, name + ".log")
     os.makedirs(log_dir, exist_ok=True)
     logger = logging.getLogger(name)
-    logger.setLevel(level)
+    logger.setLevel(logging.DEBUG)
     sh = logging.StreamHandler()
     sh.setLevel(level)
-    fh = logging.FileHandler(file_dir)
+    fh = logging.FileHandler(file_dir, "w")
     fh.setLevel(logging.DEBUG)
     formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
