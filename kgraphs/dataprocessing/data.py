@@ -1,10 +1,11 @@
+import copy
 import json
 import os
 import posix
 import re
 from logging import DEBUG
 from pathlib import Path
-from typing import Any, Iterable, List, Tuple
+from typing import Any, Iterable, Iterator, List, Tuple
 
 import pandas as pd
 from datasets import load_dataset
@@ -131,9 +132,11 @@ class DatasetFactory:
     CACHE_RELPATH = "./.cache/datasets/"
     SUPP_CTX_LEN = 128  # Supplementary Context Length
     CACHE_FORMAT = "{split}_{split_percent}_tknCap{token_cap}.parquet"
+
     SPACE_PERC_THRESH = 0.1
     MAX_INTRASPACE_THRESHOLD = 5
     MIN_NUMBER_WORDS = 15
+    WINDOW_OVERLAP = 128  # CHECK: implement if necessary
     REMOVE_REGEXES = [
         r"(?i)^\s*(Chapter|Section|Part)\s+\w+",  # Headings
         r"^\s*\d+(\.\d+)*\s+.*$",  # Numerical Patterns
@@ -260,6 +263,7 @@ class DatasetFactory:
             b.set_description(f"Added {len(train)} docs")
             b.update(1)
             break
+
         # List to pretty, indent json
         self.logger.info(f"Final Train boi is \n{train}")
         pretty_list = json.dumps(train, indent=4)
@@ -274,21 +278,25 @@ class DatasetFactory:
         # df.to_parquet(
 
     def _clean_segment(self, segment: str, removal_rgxs: List[re.Pattern]) -> str:
-        tot_len = len(segment)
-
         ### Miscelannea Round
-
+        # TODO: remove if we deem it truly useless.
         # Count amount of words
-        if tot_len < self.MIN_NUMBER_WORDS:
-            return ""
-
+        #
+        # split_segment = segment.replace("\n", "").split(" ")
+        # wc = len(split_segment)
+        # if wc < self.MIN_NUMBER_WORDS:
         # Count amount of spaces in this string
-        count_spaces = segment.count(" ")
-        if (count_spaces / tot_len) > self.SPACE_PERC_THRESH:
-            return ""
+        # count_spaces = segment.count(" ")
+        # if (count_spaces / tot_len) > self.SPACE_PERC_THRESH:
+        #     return ""
 
         # Check if spaces are too often close to each other
         # (Like in table of contents)
+
+        tot_len = len(segment)
+        if tot_len == 0:
+            return ""
+
         max_space = 0
         for word in segment.split(" "):
             if word == "":
@@ -303,9 +311,55 @@ class DatasetFactory:
         ########################################
         # Looks clean, final touches
         ########################################
+
         final_segment = segment.strip()
 
         return final_segment
+
+    def _doc_to_window_iterator(
+        self, doc: str, removal_rgxs: List[re.Pattern]
+    ) -> Iterator[List[int]]:
+        # Make inner hard copy of doc
+        copy_doc = copy.deepcopy(doc)
+        tokensAvailable = lambda x: len(x) > 1
+
+        while tokensAvailable(copy_doc):
+            # Look ahead for the next new line
+            return_tokens = []
+            debug_list = []
+            needMoreTokens = lambda x: len(x) < self.window_size
+
+            while needMoreTokens(return_tokens):
+                if not tokensAvailable(copy_doc):
+                    break  # TODO: prettify
+                next_newline = copy_doc.find("\n")
+
+                clean_seg = self._clean_segment(copy_doc[:next_newline], removal_rgxs)
+
+                if len(clean_seg) == 0:
+                    copy_doc = copy_doc[next_newline + 1 :]
+                    continue
+
+                # Get to work on the clean segment
+                word_split = clean_seg.split(" ")
+
+                for i, word in enumerate(word_split):
+                    # enc_word = self.tknzr.tokenize(
+                    #     word, add_special_tokens=False
+                    # )  # DEBUG: remove
+                    enc_word = self.tknzr.encode(word, add_special_tokens=False)
+                    return_tokens += enc_word
+
+                    debug_list.append((word, return_tokens))
+
+                    if len(return_tokens) > self.window_size:
+                        copy_doc = " ".join(clean_seg[i:]) + copy_doc  # Leftovers
+                        break
+
+                copy_doc = copy_doc[next_newline + 1 :]
+
+            yield return_tokens
+        # Generator is done
 
     def _doc(self, doc: str, bar: tqdm, clean_regexs: List[re.Pattern]):
         # Just dump the boook so I can see what it lopoks like for now
@@ -316,54 +370,21 @@ class DatasetFactory:
         with open("stripped_book.log", "w") as f:
             f.write(doc)
 
-        self.logger.debug(f"Finding ourselves in _doc")
+        self.logger.debug(f"Finding ourselves in _doc :[")
+
+        doc_tokenizer = self._doc_to_window_iterator(doc, clean_regexs)
 
         token_windows = []
 
-        cur_segidx = 0
-        cur_offset = 0
-
-        # for segment in segments:
-        while cur_offset < len(doc):
+        # While we can iterate over doc_tokenizer
+        tkn_win_iterator = doc_tokenizer
+        self.logger.debug("Amout to start parsing these bois")
+        for tkn_win in tkn_win_iterator:
             ## Cleaning
-            clean_segment = self._clean_segment(segment, clean_regexs)
-            # Segment is invalid
-            if clean_segment == "":
-                continue
-
-            # Tokenize the segment
-            tkd_seg = self.tknzr.encode(clean_segment, add_special_tokens=False)
-            cur_subsegidx = 0
-
-            # self.logger.debug(
-            #     f"In loop with cur_segidx {cur_segidx} and cur_subsegidx {cur_subsegidx}"
-            #     f" and {self.cur_amount_of_tokens} cur_amount_of_tokens"
-            # )
-
-            # ## Space Allocation
-            review_bias = 0 if cur_subsegidx <= self.SUPP_CTX_LEN else self.SUPP_CTX_LEN
-            beg = cur_subsegidx - review_bias
-
-            tope = min(
-                len(tkd_seg) - 1,
-                (cur_subsegidx - review_bias) + self.window_size,
-            )
-
-            cur_window = tkd_seg[beg:tope]
-            cur_window_debug = self.tknzr.convert_ids_to_tokens(cur_window)
-            pair = [f"{a} - {b}" for a, b in zip(cur_window, cur_window_debug)]
-            token_windows.append(pair)
-            self.cur_amount_of_tokens += len(cur_window)
-            cur_subsegidx += self.window_size
-
-        self.logger.debug(
-            f"Wrapping up with the amount of tokens {self.cur_amount_of_tokens}"
-        )
-
+            self.logger.debug(f"Added token window of size {len(tkn_win)}")
+            token_windows.append(tkn_win)
+        self.logger.debug("Done parsing these bois")
         return token_windows
-
-    # def getDatasets(self) -> BasicDataset:
-    #     pass
 
     def save_tknized_in_local_cache(self):
         pass
