@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "knowledgegraphs"
+version = "0.1.0"
+description = "Building of knowledge graphs using translational vectors for reasoning interpretability."
+authors = ["Luis Garcia <luisgarcia26284@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.9"
+pandas = "^2.2.2"
+transformers = "^4.39.3"
+datasets = "^2.18.0"
+torch = "^2.2.2"
+torchvision = "^0.17.2"
+torchaudio = "^2.2.2"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
