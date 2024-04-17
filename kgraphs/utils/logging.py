@@ -1,5 +1,6 @@
 import logging
 import os
+from typing import Tuple
 
 
 def create_logger(name, level=logging.INFO):
@@ -20,3 +21,17 @@ def create_logger(name, level=logging.INFO):
     fh.setFormatter(formatter)
     sh.setFormatter(formatter)
     return logger
+
+
+def time_to_largest_unit(time_ts: float) -> Tuple[float, str]:
+    """
+    Takes seconds and converts it to largest possible unit
+    e.g. 3601 seconds -> 1.000277 hours
+    """
+    units = ["seconds", "minutes", "hours", "days"]
+    unit_size = [60, 60, 24, 1]
+    for unit, size in zip(units, unit_size):
+        if time_ts < size:
+            return time_ts, unit
+        time_ts /= size
+    return time_ts, "years"

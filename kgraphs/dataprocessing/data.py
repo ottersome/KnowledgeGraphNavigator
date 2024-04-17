@@ -132,10 +132,11 @@ class TextStream(Iterable):
 class DatasetFactory:
     CACHE_RELPATH = "./.cache/datasets/"
     SUPP_CTX_LEN = 128  # Supplementary Context Length
-    CACHE_FORMAT = "{split}_{split_percent}_tknCap{token_cap}.parquet"
+    CACHE_FORMAT = "{split}_{split_percent}_tknCap{token_cap}.txt"
+    CACHE_FORMAT_NFILES = "{split}_{split_percent}_tknCap{token_cap}_{nth_file}.txt"
 
     SPACE_PERC_THRESH = 0.1
-    NUM_FILES_TO_CACHE_INTO = 100
+    NUM_FILES_TO_CACHE_INTO = 100  # CHECK: if you rly want to use
     MAX_INTRASPACE_THRESHOLD = 5
     MIN_NUMBER_WORDS = 15
     WINDOW_OVERLAP = 128  # CHECK: implement if necessary
@@ -165,6 +166,7 @@ class DatasetFactory:
         tokenizer_cap: int = How many tokenizers for dataset. Mostly for keeping test trains fast
         """
 
+        assert sum(split) == 1, "Split percentages must some to 1"
         self.logger = create_logger(__class__.__name__, DEBUG)
         self.ds_location = ds_location
         self.dataset_name = dataset_name
@@ -241,7 +243,51 @@ class DatasetFactory:
         else:
             return TextStream(Path(self.ds_location).iterdir())
 
-    def _garbage_collection(self, ds: List[List[int]]):
+    def _get_split_idx(
+        self, current_file_idx, total_files: int, split: Tuple[float, float, float]
+    ):
+        train_cap = split[0] * total_files
+        val_cap = (split[0] + split[1]) * total_files
+        if current_file_idx < train_cap:
+            self.logger.debug(
+                f"Returning split idx {0} (TRAIN) deemed below {split[0]*total_files}"
+            )
+            return 0
+        elif train_cap < current_file_idx and current_file_idx < val_cap:
+            self.logger.debug(f"Returning split idx {1} (VAL)")
+            return 1
+        else:
+            self.logger.debug(f"Returning split idx {2} (VAL)")
+            return 2
+
+    def _garbage_collection_split(self, ds: List[List[int]]):
+        self.logger.debug(f"Performing garbage collection with list of size {len(ds)}")
+        num_samples = len(ds)
+        cache_path = Path(self.CACHE_RELPATH)
+        cache_path.mkdir(parents=True, exist_ok=True)
+        assign_file = np.random.choice(
+            a=_SPLIT_TO_POS, p=self.split, size=(num_samples,)
+        )
+        file_to_sampleidx = {l: [] for l in _SPLIT_TO_POS}
+        for i, a in enumerate(assign_file):
+            file_to_sampleidx[a].append(i)
+
+        for split_idx, (split_name, lista) in enumerate(file_to_sampleidx.items()):
+            self.logger.debug(f"Saving to {split_name} file")
+
+            filecache_path = cache_path / self.CACHE_FORMAT.format(
+                split=split_name,
+                split_percent=self.split[split_idx],
+                token_cap=self.amnt_tkns_for_trning,
+            )  # TODO: add test
+
+            with open(filecache_path, "a") as f:
+                for idx in lista:
+                    f.write(json.dumps(ds[idx]) + "\n")
+        self.logger.debug("Carbage Collection Done")
+
+    # Probably used till later
+    def _garbage_collection_nfiles(self, ds: List[List[int]]):
         self.logger.debug(f"Performing garbage collection with list of size {len(ds)}")
         num_samples = len(ds)
         cache_path = Path(self.CACHE_RELPATH)
@@ -254,7 +300,18 @@ class DatasetFactory:
             file_to_sampleidx[a].append(i)
 
         for file_idx, lista in file_to_sampleidx.items():
-            filecache_path = cache_path / f"part_{file_idx}.txt"
+            self.logger.debug(f"Saving at file with idx {file_idx}")
+            split_idx = self._get_split_idx(
+                file_idx, self.NUM_FILES_TO_CACHE_INTO, self.split
+            )
+
+            filecache_path = cache_path / self.CACHE_FORMAT_NFILES.format(
+                split=_SPLIT_TO_POS[split_idx],
+                split_percent=self.split[split_idx],
+                token_cap=self.amnt_tkns_for_trning,
+                nth_file=file_idx,
+            )  # TODO: add test
+
             with open(filecache_path, "a") as f:
                 for idx in lista:
                     f.write(json.dumps(ds[idx]) + "\n")
@@ -284,14 +341,17 @@ class DatasetFactory:
             # self.logger.debug(f"Have added {new_list_size} windows to our dataset")
             train += new_list  # type:ignore
             windows_added += len(new_list)
-            b.set_description(f"Added {windows_added} docs")
+            b.set_description(f"Added {windows_added} samples")
             b.update(1)
 
             # Spread into the self.FILES_TO_CACHE_INTO
             if len(train) >= self.GARBAGE_COLLECTION_THRESHOLD:
                 b.set_description(f"Garbage Collectin")
-                self._garbage_collection(train)
+                self._garbage_collection_split(train)
                 train.clear()
+
+        # At the very end do one last round of garbage collection
+        self._garbage_collection_split(train)
 
         # List to pretty, indent json
         # self.logger.info(f"Final Train boi is \n{train}")

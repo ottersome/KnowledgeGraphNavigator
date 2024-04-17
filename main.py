@@ -1,12 +1,13 @@
 # %% Important imports
 import argparse
 import os
+from time import time
 
 from transformers import AutoTokenizer
 
 from kgraphs.dataprocessing.data import BasicDataset, DatasetFactory
 from kgraphs.models.models import MultiHeadAttention
-from kgraphs.utils.logging import create_logger
+from kgraphs.utils.logging import create_logger, time_to_largest_unit
 
 # %% Some global initalization
 logger = create_logger("MAIN")
@@ -27,6 +28,7 @@ def argsies():
 
 # %% Main Functions
 if __name__ == "__main__":
+    start_time = time()
     args = argsies()
 
     # Load the Tokenizer
@@ -44,3 +46,6 @@ if __name__ == "__main__":
 
     # Once the dataset is build we can load the model and train it on the stream
     model = MultiHeadAttention(args.model_dimension, args.num_heads)
+    end_time = time()
+    time, unit = time_to_largest_unit(end_time - start_time)
+    logger.info(f"Script took {time:.2f} {unit} to run.")
