@@ -42,7 +42,10 @@ if __name__ == "__main__":
         ds_location=args.raw_ds_location,
     )
 
-    dataset.load_split()
+    train_ds, val_ds, test_ds = dataset.load_split()
+    logger.info(f"Loadad Train Dataset with {len(train_ds)} samples")
+    logger.info(f"Loadad Val Dataset with {len(val_ds)} samples")
+    logger.info(f"Loadad Test Dataset with {len(test_ds)} samples")
 
     # Once the dataset is build we can load the model and train it on the stream
     model = MultiHeadAttention(args.model_dimension, args.num_heads)

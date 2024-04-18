@@ -278,7 +278,6 @@ class DatasetFactory:
         for i, a in enumerate(assign_file):
             file_to_sampleidx[a].append(i)
 
-        dfs = []
         for split_idx, (split_name, lista) in enumerate(file_to_sampleidx.items()):
             filecache_path = cache_path / self.CACHE_FORMAT.format(
                 split=split_name,
@@ -288,8 +287,10 @@ class DatasetFactory:
 
             self.logger.debug(f"Saving to {filecache_path} file")
 
+            specific_ds = [ds[idx] for idx in lista]
+
             # Save as csv for now in append mode
-            df = pd.DataFrame(ds)
+            df = pd.DataFrame(specific_ds)
             df.to_csv(filecache_path, mode="a", header=False, index=False)
 
             # Save as parquet file
@@ -314,7 +315,7 @@ class DatasetFactory:
         for file_idx, lista in file_to_sampleidx.items():
             self.logger.debug(f"Saving at file with idx {file_idx}")
             split_idx = self._get_split_idx(
-                file_idx, self.NUM_FILES_TO_CACHE_INTO, self.split
+                file_idx, self.NUM_FILES_TO_CACHE_INTO, self.split[file_idx]
             )
 
             filecache_path = cache_path / self.CACHE_FORMAT_NFILES.format(
