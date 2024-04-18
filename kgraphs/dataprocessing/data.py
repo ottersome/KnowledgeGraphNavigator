@@ -194,34 +194,42 @@ class DatasetFactory:
 
     def _check_cache(self):
         # Ensure Cache works
-        file_path = os.path.abspath(__file__)
-        file_dir = os.path.dirname(file_path)
-        self.cache_path = os.path.join(file_dir, self.CACHE_RELPATH)
+        # Get cwd
+        file_path = os.getcwd()
+        self.cache_path = os.path.join(file_path, self.CACHE_RELPATH)
+        self.logger.info(f"Using file_path {file_path}")
 
         files = []
         for i, s in enumerate(self.split):
-            if s == 0.0:
-                continue
+            # if s == 0.0:
+            #     continue
             filename = self.CACHE_FORMAT.format(
-                split=s,
-                split_percent=_SPLIT_TO_POS[i],
+                split=_SPLIT_TO_POS[i],
+                split_percent=s,
                 token_cap=self.amnt_tkns_for_trning,
             )
+            self.logger.info(f"Found file {filename}, loading it now")
             filepath = os.path.join(self.cache_path, filename)
+            self.logger.info(f"Retrieving file {filepath}")
             if os.path.exists(filepath):
                 files.append(filepath)
             else:
                 files.clear()
                 break
 
+        self.logger.info(f"We found  {len(files)} files")
         return files
 
     def _load_cached_files(self, files_to_load: List[str]) -> Tuple[pd.DataFrame, ...]:
         dss: List[pd.DataFrame] = []
         for f in files_to_load:
+            self.logger.debug("Loading partition")
             parquet: pd.DataFrame = pd.read_csv(f)
             dss.append(parquet)
-        assert len(dss) == 3, "Not all partitions were loaded"
+
+        assert (
+            len(dss) == 3
+        ), f"Not all partitions were loaded, instead we get {len(dss)}"
         return tuple(dss)
 
     def load_split(self) -> Tuple[pd.DataFrame, ...]:
@@ -272,7 +280,6 @@ class DatasetFactory:
 
         dfs = []
         for split_idx, (split_name, lista) in enumerate(file_to_sampleidx.items()):
-
             filecache_path = cache_path / self.CACHE_FORMAT.format(
                 split=split_name,
                 split_percent=self.split[split_idx],
