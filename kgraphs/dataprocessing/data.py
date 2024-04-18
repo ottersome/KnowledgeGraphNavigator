@@ -118,7 +118,6 @@ class TextStream(Iterable):
 
     def __iter__(self):
         # Check if it is an iterable of str or the one provided by load_dataset
-        print("THE INSTANCE IS ", type(self.dataset_iter))
         if self.local:
             for filepath in self.dataset_iter:
                 with open(filepath, "r") as f:
@@ -132,8 +131,8 @@ class TextStream(Iterable):
 class DatasetFactory:
     CACHE_RELPATH = "./.cache/datasets/"
     SUPP_CTX_LEN = 128  # Supplementary Context Length
-    CACHE_FORMAT = "{split}_{split_percent}_tknCap{token_cap}.txt"
-    CACHE_FORMAT_NFILES = "{split}_{split_percent}_tknCap{token_cap}_{nth_file}.txt"
+    CACHE_FORMAT = "{split}_{split_percent}_tknCap{token_cap}.csv"
+    CACHE_FORMAT_NFILES = "{split}_{split_percent}_tknCap{token_cap}_{nth_file}.csv"
 
     SPACE_PERC_THRESH = 0.1
     NUM_FILES_TO_CACHE_INTO = 100  # CHECK: if you rly want to use
@@ -217,20 +216,19 @@ class DatasetFactory:
 
         return files
 
-    def _load_cached_files(self, files_to_load: List[str]) -> List[BasicDataset]:
-        dss: List[BasicDataset] = []
-
+    def _load_cached_files(self, files_to_load: List[str]) -> Tuple[pd.DataFrame, ...]:
+        dss: List[pd.DataFrame] = []
         for f in files_to_load:
-            parquet: pd.DataFrame = pd.read_parquet(f)
-            dss.append(BasicDataset(parquet.values.tolist()))
+            parquet: pd.DataFrame = pd.read_csv(f)
+            dss.append(parquet)
+        assert len(dss) == 3, "Not all partitions were loaded"
+        return tuple(dss)
 
-        return dss
-
-    def load_split(self):
-        if len(self.cached_files) > 0:
-            self._load_cached_files(self.cached_files)
-        else:
+    def load_split(self) -> Tuple[pd.DataFrame, ...]:
+        if len(self.cached_files) == 0:
             self._compute_ds()
+
+        return tuple(self._load_cached_files(self.cached_files))
 
     def _initialize_regex(self) -> List[re.Pattern]:
         return [re.compile(r) for r in self.REMOVE_REGEXES]
@@ -272,8 +270,8 @@ class DatasetFactory:
         for i, a in enumerate(assign_file):
             file_to_sampleidx[a].append(i)
 
+        dfs = []
         for split_idx, (split_name, lista) in enumerate(file_to_sampleidx.items()):
-            self.logger.debug(f"Saving to {split_name} file")
 
             filecache_path = cache_path / self.CACHE_FORMAT.format(
                 split=split_name,
@@ -281,9 +279,16 @@ class DatasetFactory:
                 token_cap=self.amnt_tkns_for_trning,
             )  # TODO: add test
 
-            with open(filecache_path, "a") as f:
-                for idx in lista:
-                    f.write(json.dumps(ds[idx]) + "\n")
+            self.logger.debug(f"Saving to {filecache_path} file")
+
+            # Save as csv for now in append mode
+            df = pd.DataFrame(ds)
+            df.to_csv(filecache_path, mode="a", header=False, index=False)
+
+            # Save as parquet file
+            # with open(filecache_path, "a") as f:
+            #     for idx in lista:
+            #         f.write(json.dumps(ds[idx]) + "\n")
         self.logger.debug("Carbage Collection Done")
 
     # Probably used till later
@@ -419,7 +424,7 @@ class DatasetFactory:
 
             while needMoreTokens(return_tokens):
                 if not tokensAvailable(copy_doc):
-                    break  # TODO: prettify
+                    return  # TODO: prettify
                 next_newline = copy_doc.find("\n")
 
                 clean_seg = self._clean_segment(copy_doc[:next_newline], removal_rgxs)
@@ -436,11 +441,12 @@ class DatasetFactory:
                     #     word, add_special_tokens=False
                     # )  # DEBUG: remove
                     enc_word = self.tknzr.encode(word, add_special_tokens=False)
-                    return_tokens += enc_word
+                    space_avail = self.window_size - len(return_tokens)
+                    return_tokens += enc_word[:space_avail]
 
                     debug_list.append((word, return_tokens))
 
-                    if len(return_tokens) > self.window_size:
+                    if len(return_tokens) >= self.window_size:
                         copy_doc = " ".join(clean_seg[i:]) + copy_doc  # Leftovers
                         break
 
