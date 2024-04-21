@@ -129,7 +129,7 @@ class TextStream(Iterable):
 
 # DatasetFactory
 class DatasetFactory:
-    CACHE_RELPATH = "./.cache/datasets/"
+    CACHE_RELPATH = ".cache/datasets/"
     SUPP_CTX_LEN = 128  # Supplementary Context Length
     CACHE_FORMAT = "{split}_{split_percent}_tknCap{token_cap}.csv"
     CACHE_FORMAT_NFILES = "{split}_{split_percent}_tknCap{token_cap}_{nth_file}.csv"
@@ -223,9 +223,13 @@ class DatasetFactory:
     def _load_cached_files(self, files_to_load: List[str]) -> Tuple[pd.DataFrame, ...]:
         dss: List[pd.DataFrame] = []
         for f in files_to_load:
-            self.logger.debug("Loading partition")
-            parquet: pd.DataFrame = pd.read_csv(f)
-            dss.append(parquet)
+            self.logger.debug(f"Loading partition {f}")
+            try:
+                csv: pd.DataFrame = pd.read_csv(f)
+            # Catch EmptyDataError
+            except pd.errors.EmptyDataError:
+                csv = pd.DataFrame([])  # Just give it something empty
+            dss.append(csv)
 
         assert (
             len(dss) == 3
