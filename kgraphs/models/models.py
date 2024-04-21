@@ -2,6 +2,9 @@ import math
 
 import torch
 from torch import nn
+from torch.nn.modules.sparse import Embedding
+
+from kgraphs.utils.logging import create_logger
 
 
 class MultiHeadAttention(nn.Module):
@@ -58,6 +61,7 @@ class PositionWiseFeedForward(nn.Module):
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_seq_length):
         super(PositionalEncoding, self).__init__()
+        self.logger = create_logger(__name__)
 
         pe = torch.zeros(max_seq_length, d_model)
         position = torch.arange(0, max_seq_length, dtype=torch.float).unsqueeze(1)
@@ -68,10 +72,11 @@ class PositionalEncoding(nn.Module):
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
 
+
         self.register_buffer("pe", pe.unsqueeze(0))
 
     def forward(self, x):
-        return x + self.pe[:, : x.size(1)]
+        return x + self.pe
 
 
 class EncoderLayer(nn.Module):
@@ -105,9 +110,11 @@ class DecoderLayer(nn.Module):
     def forward(self, x, enc_output, src_mask, tgt_mask, cross_attn: bool):
         attn_output = self.self_attn(x, x, x, tgt_mask)
         x = self.norm1(x + self.dropout(attn_output))
+
         if cross_attn:
             attn_output = self.cross_attn(x, enc_output, enc_output, src_mask)
             x = self.norm2(x + self.dropout(attn_output))
+
         ff_output = self.feed_forward(x)
         x = self.norm3(x + self.dropout(ff_output))
         return x
@@ -122,17 +129,13 @@ class Transformer(nn.Module):
         d_ff,
         max_seq_length,
         dropout,
-        pretrained_embedding: torch.Tensor,
+        pretrained_embedding: Embedding,
     ):
         super(Transformer, self).__init__()
-
+        self.logger = create_logger(__name__)
         # Used Pretrained embeddings
-        self.encoder_embedding = nn.Embedding.from_pretrained(
-            pretrained_embedding, freeze=True
-        )
-        self.decoder_embedding = nn.Embedding.from_pretrained(
-            pretrained_embedding, freeze=True
-        )
+        self.encoder_embedding = pretrained_embedding
+        self.decoder_embedding = pretrained_embedding
 
         # TODO: pretrain this one
         self.positional_encoding = PositionalEncoding(d_model, max_seq_length)
@@ -144,7 +147,7 @@ class Transformer(nn.Module):
             [DecoderLayer(d_model, num_heads, d_ff, dropout) for _ in range(num_layers)]
         )
 
-        tgt_vocab_size = pretrained_embedding.size(0)
+        tgt_vocab_size = pretrained_embedding.num_embeddings
         self.fc = nn.Linear(d_model, tgt_vocab_size)
         self.dropout = nn.Dropout(dropout)
 
@@ -160,6 +163,7 @@ class Transformer(nn.Module):
 
     def forward(self, src, tgt):
         src_mask, tgt_mask = self.generate_mask(src, tgt)
+        encodings = self.encoder_embedding(src)
         src_embedded = self.dropout(
             self.positional_encoding(self.encoder_embedding(src))
         )
@@ -173,7 +177,9 @@ class Transformer(nn.Module):
 
         dec_output = tgt_embedded
         for dec_layer in self.decoder_layers:
-            dec_output = dec_layer(dec_output, enc_output, src_mask, tgt_mask)
+            dec_output = dec_layer(
+                dec_output, torch.Tensor([]), src_mask, tgt_mask, cross_attn=False
+            )
 
         output = self.fc(dec_output)
         return output
