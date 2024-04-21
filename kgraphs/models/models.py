@@ -61,7 +61,7 @@ class PositionWiseFeedForward(nn.Module):
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_seq_length):
         super(PositionalEncoding, self).__init__()
-        self.logger = create_logger(__name__)
+        self.logger = create_logger(__class__.__name__)
 
         pe = torch.zeros(max_seq_length, d_model)
         position = torch.arange(0, max_seq_length, dtype=torch.float).unsqueeze(1)
@@ -132,7 +132,7 @@ class Transformer(nn.Module):
         pretrained_embedding: Embedding,
     ):
         super(Transformer, self).__init__()
-        self.logger = create_logger(__name__)
+        self.logger = create_logger(__class__.__name__)
         # Used Pretrained embeddings
         self.encoder_embedding = pretrained_embedding
         self.decoder_embedding = pretrained_embedding
@@ -151,32 +151,41 @@ class Transformer(nn.Module):
         self.fc = nn.Linear(d_model, tgt_vocab_size)
         self.dropout = nn.Dropout(dropout)
 
-    def generate_mask(self, src, tgt):
+    def generate_mask(self, src: torch.Tensor, tgt: torch.Tensor):
         src_mask = (src != 0).unsqueeze(1).unsqueeze(2)
         tgt_mask = (tgt != 0).unsqueeze(1).unsqueeze(3)
         seq_length = tgt.size(1)
         nopeak_mask = (
-            1 - torch.triu(torch.ones(1, seq_length, seq_length), diagonal=1)
-        ).bool()
+            (1 - torch.triu(torch.ones(1, seq_length, seq_length), diagonal=1))
+            .bool()
+            .to(src.device)
+        )
         tgt_mask = tgt_mask & nopeak_mask
         return src_mask, tgt_mask
 
     def forward(self, src, tgt):
         src_mask, tgt_mask = self.generate_mask(src, tgt)
-        encodings = self.encoder_embedding(src)
         src_embedded = self.dropout(
             self.positional_encoding(self.encoder_embedding(src))
+        )
+        self.logger.info(
+            f"We  have generated src_embedded of shape {src_embedded.shape} "
         )
         tgt_embedded = self.dropout(
             self.positional_encoding(self.decoder_embedding(tgt))
         )
+        self.logger.info(
+            f"We  have generated tgt_embedded of shape {tgt_embedded.shape} "
+        )
 
         enc_output = src_embedded
-        for enc_layer in self.encoder_layers:
+        for i, enc_layer in enumerate(self.encoder_layers):
+            self.logger.info(f"We are going through the {i}th layer of encodeer ")
             enc_output = enc_layer(enc_output, src_mask)
 
         dec_output = tgt_embedded
-        for dec_layer in self.decoder_layers:
+        for i, dec_layer in enumerate(self.decoder_layers):
+            self.logger.info(f"We are going through the {i}th layer of decoder ")
             dec_output = dec_layer(
                 dec_output, torch.Tensor([]), src_mask, tgt_mask, cross_attn=False
             )
