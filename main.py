@@ -7,6 +7,8 @@ from typing import List, Tuple
 
 import pandas as pd
 import torch
+import torch.nn.functional as F
+import wandb
 from tqdm import tqdm
 from transformers import AutoTokenizer, BartModel, BartTokenizer
 from transformers.tokenization_utils_fast import TokenizerFast
@@ -36,10 +38,12 @@ def argsies():
     ap.add_argument("--masking_percentage", default=0.1)
     ap.add_argument("--raw_ds_location", default="./data/raw/")
 
+    ap.add_argument("-w", "--wandb", action="store_true")
+
     return ap.parse_args()
 
 
-def masked_tensor(
+def mask_tensor(
     tokens: torch.Tensor, tokenizer: BartTokenizer, masking_percentage: float
 ) -> torch.Tensor:
     """
@@ -53,6 +57,7 @@ def masked_tensor(
         for j in range(new_list.shape[1]):
             if torch.rand(1) < masking_percentage:
                 new_list[i, j] = tokenizer.mask_token_id  # type: ignore
+    # CHECK: Log these bois
     return new_list
 
 
@@ -60,6 +65,10 @@ def masked_tensor(
 if __name__ == "__main__":
     start_time = time()
     args = argsies()
+
+    # Initialize wandb
+    if args.wandb:
+        wandb.init(project="kgraphs")
 
     # Load the Tokenizer
     tokenizer: BartTokenizer = AutoTokenizer.from_pretrained(args.model_name)
@@ -103,10 +112,15 @@ if __name__ == "__main__":
     criterium = torch.nn.CrossEntropyLoss()
 
     num_batches = floor(len(train_ds) / args.batch_size)
-    losses = []
-    for e in tqdm(range(args.epochs)):
+    losses_epoch = []
+    # Inner and outer bars
+    e_bar = tqdm(range(args.epochs), desc="Epochs")
+    b_bar = tqdm(range(num_batches), desc="Batches")
+    for e in range(args.epochs):
         # Extract the batch
-        logger.debug(f"Entering epoch number {e}")
+        losses_batch = []
+
+        b_bar.reset()
         for b in range(num_batches):
             # Get the batch
             batch = train_ds.iloc[
@@ -119,25 +133,70 @@ if __name__ == "__main__":
             # Send data
             target = torch.Tensor(batch).to(torch.long).to(device)
             token_list_tensor = torch.tensor(batch).to(device)
-            masked_tensor = masked_tensor(  # type: ignore
+            mlmd_tensor = mask_tensor(  # type: ignore
                 token_list_tensor, tokenizer, float(args.masking_percentage)
             ).to(torch.long)
             # Multiply source by mask
 
-            result = model(masked_tensor, target)
+            result = model(mlmd_tensor, target)
 
-            logger.info(
-                f"Result from model is of shape {result.shape} and target is of shape {target.shape}"
-            )
-            loss = criterium(result.view(-1, ), target.squeeze(0)).mean()
-            losses.append(loss.item())
+            loss = criterium(
+                result.view(-1, result.shape[-1]),
+                target.view(-1),
+            ).mean()
+            losses_batch.append(loss.item())
+            if len(losses_batch) > 5 and args.wandb:
+                wandb.log({"loss": sum(losses_batch[-5:]) / 5, "batch": b})
 
             # Get the backpropagation details
             optimizer.zero_grad()
-            logger.info("Just passed the optimizer ")ZZ
             loss.backward()
-            logger.info("Just did backpropagation")
             optimizer.step()
-            logger.info("Just did optimizer step")
+            b_bar.update(1)
 
             # TODO: perhaps save the model environment eventually
+        losses_epoch.append(sum(losses_batch) / len(losses_batch))
+        # Report locally and to wandb
+        logger.info(f"Epoch {e} has loss {losses_epoch[-1]}")
+        if args.wandb:
+            wandb.log({"loss": losses_epoch[-1], "epoch": e})
+
+        # Validate on a per epoch basis
+        e_bar.set_description("Evaluating")
+        model.eval()
+        num_eval_batches = len(val_ds) // args.batch_size
+        eval_losses = []
+        b_bar.set_description("Evaluation Batch")
+        for i in range(num_eval_batches):
+            batch = val_ds.iloc[
+                i * args.batch_size : (i + 1) * args.batch_size
+            ].values.tolist()
+
+            token_list_tensor = torch.Tensor(batch).to(torch.long).to(device)
+
+            mlmd_tensor = mask_tensor(  # type: ignore
+                token_list_tensor, tokenizer, float(args.masking_percentage)
+            ).to(torch.long)
+
+            result = model(mlmd_tensor, token_list_tensor)
+            softies = F.softmax(result, dim=-1)
+            chosen_ids = torch.argmax(softies, dim=-1)
+
+            # Log mlmd_tensor[:20] vs result[:20] vs token_list_tensor[:20] textually to see examples of guesses
+            corrupted_translated = tokenizer.batch_decode(mlmd_tensor[:, :20])
+            denosied_translated = tokenizer.batch_decode(chosen_ids[:, :20])
+            true_translated = tokenizer.batch_decode(token_list_tensor[:, :20])
+            logger.debug(f"MLMD: {corrupted_translated}")
+            logger.debug(f"Result: {denosied_translated}")
+            logger.debug(f"True: {true_translated}")
+
+            loss = criterium(
+                result.view(-1, result.shape[-1]),
+                token_list_tensor.view(-1),
+            )
+            eval_losses.append(loss.item())
+            b_bar.update(1)
+
+        # Present the validation
+
+        e_bar.update(1)

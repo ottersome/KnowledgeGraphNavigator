@@ -72,7 +72,6 @@ class PositionalEncoding(nn.Module):
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
 
-
         self.register_buffer("pe", pe.unsqueeze(0))
 
     def forward(self, x):
@@ -168,24 +167,17 @@ class Transformer(nn.Module):
         src_embedded = self.dropout(
             self.positional_encoding(self.encoder_embedding(src))
         )
-        self.logger.info(
-            f"We  have generated src_embedded of shape {src_embedded.shape} "
-        )
         tgt_embedded = self.dropout(
             self.positional_encoding(self.decoder_embedding(tgt))
-        )
-        self.logger.info(
-            f"We  have generated tgt_embedded of shape {tgt_embedded.shape} "
         )
 
         enc_output = src_embedded
         for i, enc_layer in enumerate(self.encoder_layers):
-            self.logger.info(f"We are going through the {i}th layer of encodeer ")
             enc_output = enc_layer(enc_output, src_mask)
 
         dec_output = tgt_embedded
         for i, dec_layer in enumerate(self.decoder_layers):
-            self.logger.info(f"We are going through the {i}th layer of decoder ")
+            # self.logger.info(f"We are going through the {i}th layer of decoder ")
             dec_output = dec_layer(
                 dec_output, torch.Tensor([]), src_mask, tgt_mask, cross_attn=False
             )
