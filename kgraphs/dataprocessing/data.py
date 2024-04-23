@@ -32,6 +32,7 @@ _SPLIT_TO_POS = ["TRAIN", "VAL", "TEST"]
 
 MAX_INTRASPACE_THRESHOLD = 5
 
+
 class BasicDataset(Dataset):
     def __init__(self, samples: List[Any]):
         self.samples = samples
@@ -422,113 +423,81 @@ class DatasetFactory:
         # TODO: finish
         # df.to_parquet(
 
-    def _clean_segment(self, segment: str, removal_rgxs: List[re.Pattern]) -> str:
-        ### Miscelannea Round
-        # TODO: remove if we deem it truly useless.
-        # Count amount of words
-        #
-        # split_segment = segment.replace("\n", "").split(" ")
-        # wc = len(split_segment)
-        # if wc < self.MIN_NUMBER_WORDS:
-        # Count amount of spaces in this string
-        # count_spaces = segment.count(" ")
-        # if (count_spaces / tot_len) > self.SPACE_PERC_THRESH:
-        #     return ""
-
-        # Check if spaces are too often close to each other
-        # (Like in table of contents)
-
-        tot_len = len(segment)
-        if tot_len == 0:
-            return ""
-
-        max_space = 0
-        for word in segment.split(" "):
-            if word == "":
-                max_space += 1
-            if max_space > self.MAX_INTRASPACE_THRESHOLD:
-                return ""
-
-        ###  Regex round
-        for r in removal_rgxs:
-            segment = r.sub("", segment)
-
-        ########################################
-        # Looks clean, final touches
-        ########################################
-
-        final_segment = segment.strip()
-
-        return final_segment
-
     def _doc_to_window_iterator(
         self, doc: str, removal_rgxs: List[re.Pattern]
     ) -> Iterator[List[int]]:
-        # Make inner hard copy of doc
+        """Im so sorry"""
         copy_doc = copy.deepcopy(doc)
-        tokensAvailable = lambda x: len(x) > 1
-
-        while tokensAvailable(copy_doc):
-            # Look ahead for the next new line
+        while len(copy_doc) > 1:
             return_tokens = []
-            debug_list = []
-            needMoreTokens = lambda x: len(x) < self.window_size
-
-            while needMoreTokens(return_tokens):
-                if not tokensAvailable(copy_doc):
-                    return  # TODO: prettify
+            while len(return_tokens) < self.window_size:
                 next_newline = copy_doc.find("\n")
+                clean_seg = clean_segment(copy_doc[:next_newline], removal_rgxs)
 
-                clean_seg = self._clean_segment(copy_doc[:next_newline], removal_rgxs)
+                left_overs = []
+                if len(clean_seg) != 0:
+                    word_split = clean_seg.split(" ")
+                    words_used, left_overs = self._process_words(
+                        word_split, return_tokens
+                    )
 
-                if len(clean_seg) == 0:
-                    copy_doc = copy_doc[next_newline + 1 :]
-                    continue
-
-                # Get to work on the clean segment
-                word_split = clean_seg.split(" ")
-
-                for i, word in enumerate(word_split):
-                    # enc_word = self.tknzr.tokenize(
-                    #     word, add_special_tokens=False
-                    # )  # DEBUG: remove
-                    enc_word = self.tknzr.encode(word, add_special_tokens=False)
-                    space_avail = self.window_size - len(return_tokens)
-                    return_tokens += enc_word[:space_avail]
-
-                    debug_list.append((word, return_tokens))
-
-                    if len(return_tokens) >= self.window_size:
-                        copy_doc = " ".join(clean_seg[i:]) + copy_doc  # Leftovers
-                        break
-
-                copy_doc = copy_doc[next_newline + 1 :]
+                if next_newline == -1 and len(left_overs) == 0:
+                    return ""
+                copy_doc = str(" ".join(left_overs)) + copy_doc[next_newline + 1 :]
 
             yield return_tokens
-        # Generator is done
+
+    def _process_words(
+        self, word_split: List[str], return_tokens: List[int]
+    ) -> Tuple[int, List[str]]:
+        words_used = 0
+        left_overs = []
+        for word in word_split:
+            words_used += 1
+            enc_word = self.tknzr.encode(word, add_special_tokens=False)
+            space_avail = self.window_size - len(return_tokens)
+            return_tokens += enc_word[:space_avail]
+
+            if len(return_tokens) >= self.window_size:
+                left_overs = word_split[words_used:]
+                break
+        return words_used, left_overs
 
     def _doc(
         self, doc: str, bar: tqdm, clean_regexs: List[re.Pattern]
     ) -> List[List[int]]:
-        # Just dump the boook so I can see what it lopoks like for now
-        # with open("book.log", "w") as f:
-        #     f.write(doc) # DEBUG: remove
 
         doc = strip_headers(doc)
-        # with open("stripped_book.log", "w") as f:
-        #     f.write(doc) # DEBUG: remove
-
-        doc_tokenizer = self._doc_to_window_iterator(doc, clean_regexs)
-
+        tkn_win_iterator = self._doc_to_window_iterator(doc, clean_regexs)
         token_windows = []
 
         # While we can iterate over doc_tokenizer
-        tkn_win_iterator = doc_tokenizer
         for tkn_win in tkn_win_iterator:
             ## Cleaning
-            # self.logger.debug(f"Added token window of size {len(tkn_win)}")
             token_windows.append(tkn_win)
         return token_windows
 
-    def save_tknized_in_local_cache(self):
-        pass
+
+def clean_segment(segment: str, removal_rgxs: List[re.Pattern]) -> str:
+    ### Miscelannea Round
+    tot_len = len(segment)
+    if tot_len == 0:
+        return ""
+
+    max_space = 0
+    for word in segment.split(" "):
+        if word == "":
+            max_space += 1
+        if max_space > MAX_INTRASPACE_THRESHOLD:
+            return ""
+
+    ###  Regex round
+    for r in removal_rgxs:
+        segment = r.sub("", segment)
+
+    ########################################
+    # Looks clean, final touches
+    ########################################
+
+    final_segment = segment.strip()
+    return final_segment
