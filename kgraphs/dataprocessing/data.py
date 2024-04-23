@@ -154,11 +154,11 @@ class DatasetFactory:
     CACHE_RELPATH = ".cache/datasets/"
     SUPP_CTX_LEN = 128  # Supplementary Context Length
     CACHE_FORMAT = "{split}_{split_percent}_tknCap{token_cap}.csv"
+    LANGUAGE = "english"
     CACHE_FORMAT_NFILES = "{split}_{split_percent}_tknCap{token_cap}_{nth_file}.csv"
 
     SPACE_PERC_THRESH = 0.1
     NUM_FILES_TO_CACHE_INTO = 100  # CHECK: if you rly want to use
-    MAX_INTRASPACE_THRESHOLD = 5
     MIN_NUMBER_WORDS = 15
     WINDOW_OVERLAP = 128  # CHECK: implement if necessary
     GARBAGE_COLLECTION_THRESHOLD = 900
@@ -188,7 +188,7 @@ class DatasetFactory:
         """
 
         assert sum(split) == 1, "Split percentages must some to 1"
-        self.logger = create_logger(__class__.__name__, DEBUG)
+        self.logger = create_logger(__class__.__name__, INFO)
         self.ds_location = ds_location
         self.dataset_name = dataset_name
         self.window_size = window_size
@@ -209,7 +209,8 @@ class DatasetFactory:
         # TOREM: Trashy state use
         self.cur_amount_of_tokens = 0
 
-        # Check for cache data
+        # Read "data/gutenberg-metadata.json"
+        self.metadata = json.load(open("data/gutenberg-metadata.json"))
 
         # os.makedirs(CACHE_NAME, exists_ok=True)
         self.cached_files = self._check_cache()  # If empty then we have no cache
@@ -230,22 +231,23 @@ class DatasetFactory:
                 split_percent=s,
                 token_cap=self.amnt_tkns_for_trning,
             )
-            self.logger.info(f"Found file {filename}, loading it now")
             filepath = os.path.join(self.cache_path, filename)
-            self.logger.info(f"Retrieving file {filepath}")
             if os.path.exists(filepath):
+                self.logger.info(f"Found file {filename}, loading it now")
                 files.append(filepath)
             else:
                 files.clear()
                 break
 
-        self.logger.info(f"We found  {len(files)} files")
+        self.logger.info(
+            f"We found  {len(files)} files in cache directory {self.cache_path}"
+        )
         return files
 
     def _load_cached_files(self, files_to_load: List[str]) -> Tuple[pd.DataFrame, ...]:
         dss: List[pd.DataFrame] = []
         for f in files_to_load:
-            self.logger.debug(f"Loading partition {f}")
+            self.logger.info(f"Loading partition {f}")
             try:
                 csv: pd.DataFrame = pd.read_csv(f)
             # Catch EmptyDataError
@@ -259,6 +261,7 @@ class DatasetFactory:
         return tuple(dss)
 
     def load_split(self) -> Tuple[pd.DataFrame, ...]:
+        self.logger.info(f"Number of cached files is {self.cached_files}")
         if len(self.cached_files) == 0:
             self._compute_ds()
 
@@ -269,10 +272,16 @@ class DatasetFactory:
 
     def get_dataset_iter(self) -> Iterable[Any]:
         if self.stream:
+            self.logger.info("Using Internet Stream to load it")
             return TextStream(
                 load_dataset(self.dataset_name, split="en", streaming=True)
             )
         else:
+            # Check size of file
+            self.logger.info(f"Using local dataset at {self.ds_location}")
+            self.logger.info(
+                f"Berofere we send this ds location we can see it has {len(list(Path(self.ds_location).iterdir()))}"
+            )
             return TextStream(Path(self.ds_location).iterdir())
 
     def _get_split_idx(
@@ -305,19 +314,19 @@ class DatasetFactory:
             file_to_sampleidx[a].append(i)
 
         for split_idx, (split_name, lista) in enumerate(file_to_sampleidx.items()):
-            filecache_path = cache_path / self.CACHE_FORMAT.format(
+            cachefile_path = cache_path / self.CACHE_FORMAT.format(
                 split=split_name,
                 split_percent=self.split[split_idx],
                 token_cap=self.amnt_tkns_for_trning,
             )  # TODO: add test
 
-            self.logger.debug(f"Saving to {filecache_path} file")
+            self.logger.debug(f"Saving to {cachefile_path} file")
 
             specific_ds = [ds[idx] for idx in lista]
 
             # Save as csv for now in append mode
             df = pd.DataFrame(specific_ds)
-            df.to_csv(filecache_path, mode="a", header=False, index=False)
+            df.to_csv(cachefile_path, mode="a", header=False, index=False)
 
             # Save as parquet file
             # with open(filecache_path, "a") as f:
@@ -364,28 +373,37 @@ class DatasetFactory:
         dataset_iter = self.get_dataset_iter()
         train: List[List[int]] = []
         cap = 2
-        # f = open("./dumpy.log", "w")# DEBUG: remove
         b = tqdm(total=cap + 1)
         self.cur_amount_of_tokens = 0
 
         clean_regexes = self._initialize_regex()
         windows_added = 0
 
-        for i, doc in enumerate(dataset_iter):
+        self.logger.debug("We are about to enter the dataset_iteration")
+        for i, (doc_content, doc_name) in enumerate(dataset_iter):
             if self.cur_amount_of_tokens > self.amnt_tkns_for_trning:
                 break
 
-            new_list = self._doc(doc, b, clean_regexes)  # type:ignore
-            new_list_size = len(new_list)
-            # self.logger.debug(f"Have added {new_list_size} windows to our dataset")
-            train += new_list  # type:ignore
-            windows_added += len(new_list)
-            b.set_description(f"Added {windows_added} samples")
+            # Check for language before processing
+            PG_id = (str(doc_name).split("/")[-1].split("_")[0]).replace("PG", "")
+            self.logger.debug(f"Checking PG_id {PG_id} for language")
+            lang_id = self.metadata[PG_id]["language"][0]
+
+            if lang_id == "en":
+                new_list = self._doc(doc_content, b, clean_regexes)  # type:ignore
+                self.logger.debug(f"Have added {len(new_list)} windows to our dataset")
+                train += new_list  # type:ignore
+                windows_added += len(new_list)
+                b.set_description(f"Added {windows_added} samples")
+            else:
+                self.logger.debug(
+                    f"Skipping file {doc_name} becuase language {lang_id} != {self.LANGUAGE}"
+                )
             b.update(1)
 
             # Spread into the self.FILES_TO_CACHE_INTO
             if len(train) >= self.GARBAGE_COLLECTION_THRESHOLD:
-                b.set_description(f"Garbage Collectin")
+                b.set_description(f"Garbage Collectin with len(train) = {len(train)}")
                 self._garbage_collection_split(train)
                 train.clear()
 
