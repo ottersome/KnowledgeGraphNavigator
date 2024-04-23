@@ -1,16 +1,17 @@
 import copy
+import itertools
 import json
 import os
 import re
 from collections import defaultdict
-from logging import DEBUG
+from logging import DEBUG, INFO
 from pathlib import Path
 from typing import Any, Iterable, Iterator, List, Tuple
 
 import numpy as np
 import pandas as pd
 from datasets import load_dataset
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset
 from tqdm import tqdm
 from transformers import PreTrainedTokenizer
 
@@ -29,6 +30,7 @@ For now we will load project gutenberg and shard it into managable windows:
 
 _SPLIT_TO_POS = ["TRAIN", "VAL", "TEST"]
 
+MAX_INTRASPACE_THRESHOLD = 5
 
 class BasicDataset(Dataset):
     def __init__(self, samples: List[Any]):
@@ -107,23 +109,43 @@ def strip_headers(text):
 # and *yield* text within them
 class TextStream(Iterable):
     def __init__(self, dataset_iter: Iterable[Any]):
+        self.logger = create_logger(__class__.__name__, INFO)
         self.dataset_iter = dataset_iter
         # HACK: but meh:
         first_item = next(iter(self.dataset_iter))
+        # place back first item into self.dataset_iter
+
         self.local = False
         try:
             "text" in first_item  # type:ignore
         except:
+
             self.local = True
+        # Check how many items dataset_iter has
+        self.dataset_iter = itertools.chain([first_item], self.dataset_iter)
 
     def __iter__(self):
         # Check if it is an iterable of str or the one provided by load_dataset
         if self.local:
             for filepath in self.dataset_iter:
                 with open(filepath, "r") as f:
-                    yield f.read()
+                    self.logger.debug(f"We are now looking into using file  {filepath}")
+                    # yield content and name of file
+                    content = ""
+                    try:
+                        content = f.read()
+                    except UnicodeDecodeError:
+                        self.logger.warn(
+                            f"Cannot process, and thus skipping {filepath} (encoding not UTF-8)"
+                        )
+                        continue
+
+                    self.logger.debug(f"Adding content of size: {len(content)}")
+                    yield content, filepath
         else:
             for doc in self.dataset_iter:
+                self.logger.debug("We are  actually using webstreams")
+                # TODO: Ensure it works as above case
                 yield doc["text"]
 
 
