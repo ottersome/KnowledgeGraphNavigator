@@ -120,7 +120,6 @@ class TextStream(Iterable):
         try:
             "text" in first_item  # type:ignore
         except:
-
             self.local = True
         # Check how many items dataset_iter has
         self.dataset_iter = itertools.chain([first_item], self.dataset_iter)
@@ -466,7 +465,6 @@ class DatasetFactory:
     def _doc(
         self, doc: str, bar: tqdm, clean_regexs: List[re.Pattern]
     ) -> List[List[int]]:
-
         doc = strip_headers(doc)
         tkn_win_iterator = self._doc_to_window_iterator(doc, clean_regexs)
         token_windows = []
