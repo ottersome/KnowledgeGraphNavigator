@@ -4,7 +4,7 @@ from bs4 import BeautifulSoup
 from ..utils.logging import MAIN_LOGGER_NAME, create_logger
 
 
-def get_wikipedia_content(url: str) -> str:
+def get_wikipedia_raw_content(url: str) -> str:
     logger = create_logger(MAIN_LOGGER_NAME)
     try:
         # Send a GET request to the URL
@@ -28,3 +28,21 @@ def get_wikipedia_content(url: str) -> str:
             f"An error occurred when trying to pull wikipedia article {url} information: {e}"
         )
         return ""
+
+
+def get_wikipedia_json_content(url: str) -> dict:
+    """
+    Query the wikipedia json endpoing and return as dictionary
+    """
+    logger = create_logger(MAIN_LOGGER_NAME)
+    try:
+        page_id = url.split("/")[-1]
+        url = f"https://en.wikipedia.org/w/api.php?action=parse&page={page_id}&format=json&prop=sections|wikitext"
+        response = requests.get(url)
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        logger.warn(
+            f"An error occurred when trying to pull wikipedia article {url} information: {e}"
+        )
+        return {}

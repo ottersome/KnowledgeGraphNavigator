@@ -32,11 +32,7 @@ def sample_fuseki_db(
     sparql.setReturnFormat(JSON)
     results = sparql.query().convert()
     triplets = [
-        (
-            result["subject"]["value"],  # type: ignore
-            result["predicate"]["value"],  # type: ignore
-            result["object"]["value"],  # type: ignore
-        )
+        result["object"]["value"]  # type: ignore
         for result in results["results"]["bindings"]  # type: ignore
     ]
     if random_sample:
