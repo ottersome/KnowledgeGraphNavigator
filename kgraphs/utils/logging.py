@@ -2,6 +2,8 @@ import logging
 import os
 from typing import Tuple
 
+MAIN_LOGGER_NAME = "MAIN"
+
 
 def create_logger(name, level=logging.INFO):
     log_dir = os.path.join(os.getcwd(), "logs/")
