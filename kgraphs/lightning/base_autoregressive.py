@@ -32,7 +32,7 @@ class BaseAutoregressive(L.LightningModule):
         mlmd_tensor.to(torch.long)
         mask_tensor.to(torch.bool)
 
-        result = self.model(mlmd_tensor, target.clone(), self.tokenizer.mask_token_id)
+        result = self.model(mlmd_tensor, target.clone())
 
         # TODO: Ensure this loss is only activiated for MLM tokens
         masked_result = result[mask_tensor]
@@ -53,7 +53,7 @@ class BaseAutoregressive(L.LightningModule):
         extended_mask = get_idx_around_mask(mask_tensor, ctx_win_radius=3)
 
         model_device = next(self.model.parameters()).device
-        result = self.model(mlmd_tensor, target.clone(), self.tokenizer.mask_token_id)
+        result = self.model(mlmd_tensor, target.clone())
         masked_result = result[extended_mask]
         masked_target = target[extended_mask]
         softies = F.softmax(masked_result, dim=-1)
