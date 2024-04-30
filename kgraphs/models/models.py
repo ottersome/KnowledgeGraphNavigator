@@ -183,7 +183,7 @@ class Transformer(nn.Module):
         for i, dec_layer in enumerate(self.decoder_layers):
             # self.logger.info(f"We are going through the {i}th layer of decoder ")
             dec_output = dec_layer(
-                dec_output, torch.Tensor([]), src_mask, tgt_mask, cross_attn=False
+                dec_output, enc_output, src_mask, tgt_mask, cross_attn=True
             )
 
         output = self.fc(dec_output)
