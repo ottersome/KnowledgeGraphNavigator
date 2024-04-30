@@ -127,7 +127,8 @@ class Transformer(nn.Module):
         num_layers,
         d_ff,
         max_seq_length,
-        dropout,
+        dropout: float,
+        padding_id: int,
         pretrained_embedding: Embedding,
     ):
         super(Transformer, self).__init__()
@@ -135,6 +136,7 @@ class Transformer(nn.Module):
         # Used Pretrained embeddings
         self.encoder_embedding = pretrained_embedding
         self.decoder_embedding = pretrained_embedding
+        self.padding_id = padding_id
 
         # TODO: pretrain this one
         self.positional_encoding = PositionalEncoding(d_model, max_seq_length)
@@ -151,8 +153,10 @@ class Transformer(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def generate_mask(self, src: torch.Tensor, tgt: torch.Tensor):
-        src_mask = (src != 0).unsqueeze(1).unsqueeze(2)
-        tgt_mask = (tgt != 0).unsqueeze(1).unsqueeze(3)
+        # src_mask : (batch_len x seq_len) -> (batch_len x 1 x 1       x seq_len)
+        src_mask = (src != self.padding_id).unsqueeze(1).unsqueeze(2)
+        # tgt_mask : (batch_len x seq_len) -> (batch_len x 1 x seq_len x 1)
+        tgt_mask = (tgt != self.padding_id).unsqueeze(1).unsqueeze(3)
         seq_length = tgt.size(1)
         nopeak_mask = (
             (1 - torch.triu(torch.ones(1, seq_length, seq_length), diagonal=1))
