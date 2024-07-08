@@ -1,4 +1,5 @@
 import bz2
+import mmap
 import os
 import pickle
 import random
@@ -6,10 +7,11 @@ import signal
 import sys
 import xml.etree.ElementTree as ET
 from argparse import ArgumentParser
-from time import sleep
+from time import sleep, time
 from typing import IO, Dict, List, Sequence, Tuple
 
 import indexed_bzip2 as ibz2
+from lxml import etree
 from tqdm import tqdm
 
 
@@ -25,44 +27,57 @@ def argsies():
         type=str,
     )
     ap.add_argument(
-        "--block_offset_map_cache",
-        default="./.cache/bom_cache.dat",
-        help="Where to store block offset map",
+        "-c",
+        "--lineoffset_cache",
+        default="./.cache/lineoffsets.dat",
+        help="Where to store line offset cache",
+    )
+    ap.add_argument(
+        "-j",
+        "--index_file",
+        type=str,
+        required=True,
     )
     ap.add_argument(
         "-o",
-        "--extract_output_dir",
+        "--sample_output_path",
         help="Where the extraction will be dumped.",
         type=str,
         required="--mode" in sys.argv
         and sys.argv[sys.argv.index("--mode") + 1] == "extract",
     )
-    ap.add_argument(
-        "-f",
+    # Two mutually exclusive arguments, samplikng_fraction and sampling_amount
+    group = ap.add_mutually_exclusive_group(required=True)
+    group.add_argument(
         "--sampling_fraction",
         help="Percentage of large datatset to fraction.",
         type=float,
-        required="--mode" in sys.argv
-        and sys.argv[sys.argv.index("--mode") + 1] == "sample",
+        required=False,
     )
+    group.add_argument(
+        "--sampling_amount",
+        help="Amount of articles to sample",
+        type=int,
+        required=False,
+    )
+
+    # ap.add_argument(
+    #     "-f",
+    #     "--sampling_fraction",
+    #     help="Percentage of large datatset to fraction.",
+    #     type=float,
+    #     required="--mode" in sys.argv
+    #     and sys.argv[sys.argv.index("--mode") + 1] == "sample",
+    # )
+    #
     # for handling ipython auto-indentation
-    ap.add_argument(
-        "--no-autoindent",
-        action="store_true",
-        help="Indent the output.",
-    )
-    ap.add_argument("--read_chunk_size", default=1024, type=int)
-    # Ask for mode, either extraction or sampling (multiple choice)
-    ap.add_argument("-m", "--mode", choices=["extract", "sample"], default="sample")
-    # Make it so we ask for extract_output_dir only if we are in extract mode
-    ap.add_argument("--cachedir", help="Where to store the cache", default="./.cache")
+    # ap.add_argument(
+    #     "--no-autoindent",
+    #     action="store_true",
+    #     help="Indent the output.",
+    # )
 
-    # Ensure existance of cachedir
-    args = ap.parse_args()
-    if args.mode == "extract" and not os.path.exists(args.cachedir):
-        os.makedirs(args.cachedir)
-
-    return args
+    return ap.parse_args()
 
 
 def create_page_index(
@@ -299,30 +314,12 @@ def keyboard_interrupt_handler(signal, frame):
 #     return decompressed_data[start : start + read_size]
 
 
-def create_block_offsets_map(bz2_path: str, cache_path: str) -> Dict[int, int]:
-    # Check if has already been created
-    if os.path.exists(cache_path):
-        print(f"Found cached offset map at {cache_path}. Loading... ")
-        with open(cache_path, "rb") as offsets_file:
-            return pickle.load(offsets_file)
-
-    file = ibz2.open(bz2_path, parallelization=os.cpu_count())
-    print(f"Creating block offset map for {bz2_path}")
-    block_offsets = file.block_offsets()  # can take a while
-    print(f"Block offset map created for {bz2_path}")
-    with open(cache_path, "wb") as offsets_file:
-        pickle.dump(block_offsets, offsets_file)
-    file.close()
-
-    return block_offsets
-
-
 def seek_and_read(
     bz2_file_path,
     target_id,
     id_offset_dict: Dict[int, int],
     block_offset_map: Dict[int, int],
-):
+) -> str:
     """
     Given an id that can be found in page_ids we use the corresonding page_offsets to find the
     correct offset in the bz2 file.
@@ -335,7 +332,7 @@ def seek_and_read(
     with ibz2.open(bz2_file_path, parallelization=os.cpu_count()) as f:
         f.set_block_offsets(block_offset_map)
         f.seek(offset)
-        page_txt = retrieve_page(f)
+        page_text = retrieve_page(f)
 
     return page_text
 
@@ -357,15 +354,22 @@ def retrieve_page(
 def find_article(
     file_path: str,
     stream_offset: int,
+    next_stream_offset: int,
     article_offset: int,
-    article_title: str,
-):
-    next_offset = 700582
+) -> str:
+    # Find the next offset
+    article = ""
     with open(file_path, "rb") as f:
+        # Ensure we can find the next offset
+
+        # Check EOF
         # Seek to the start of the compressed stream
         f.seek(stream_offset)
-        print(f"Reading {next_offset - stream_offset} bytes")
-        article_binary = f.read(next_offset - stream_offset)
+        print(
+            f"Given current offset is {stream_offset} and next offset is {next_stream_offset}"
+        )
+        print(f"Reading {next_stream_offset - stream_offset} bytes")
+        article_binary = f.read(next_stream_offset - stream_offset)
 
         # Decompress the stream from the current file position
         print(f"Decompressing {len(article_binary)} bytes")
@@ -374,55 +378,141 @@ def find_article(
         # Convert bytes to string for processing
         decompressed_data = decompressed_data.decode("utf-8")
 
-        print(f"Decompressed data is {decompressed_data}")
+        article = find_article_within_stream(decompressed_data, article_offset)
+    assert article != "", "Article not found"
+    return article
 
-        # Find the article within the decompressed data
-        start_index = decompressed_data.find(f"<title>{article_title}</title>")
 
-        if start_index == -1:
-            print(f"Article '{article_title}' not found.")
-            return None
+def count_lines(file: IO) -> int:
+    with mmap.mmap(file.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+        return mm.read().count(b"\n")
 
-        # Extract the article content
-        end_index = decompressed_data.find("</page>", start_index) + len("</page>")
-        article_content = decompressed_data[start_index:end_index]
 
-        return article_content
+def find_text_offset(file: IO, text: str) -> int:
+    with mmap.mmap(file.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+        offset = mm.find(text.encode())
+        return offset
+
+
+def find_nth_line(file: IO, n: int) -> str:
+    with mmap.mmap(file.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+        line_start = 0
+        line_count = 0
+        while line_count < n:
+            line_end = mm.find(b"\n", line_start)
+            if line_end == -1:
+                # If we reach the end of the file before finding the nth line
+                raise ValueError(f"File has fewer than {n} lines.")
+            line_start = line_end + 1
+            line_count += 1
+        # Find the end of the nth line
+        line_end = mm.find(b"\n", line_start)
+        if line_end == -1:
+            # If the nth line is the last line and doesn't end with a newline
+            line_end = len(mm)
+        return mm[line_start:line_end].decode()
+
+
+def get_line_offsets(file_path: str) -> List[Tuple[int, int, str, int]]:
+    # Use the systems cat | wc -l to count lines
+    line_count = count_lines(open(file_path))
+    bar = tqdm(total=line_count)
+    final_list = []
+    with open(file_path) as f:
+        need_offset_updated = []
+        cur_offset = -1
+
+        while line := f.readline():
+            split = line.split(":")
+            new_offset = int(split[0])
+            if new_offset != cur_offset and cur_offset != -1:
+                # Add to them the cur_offset and update final_list
+                for i in range(len(need_offset_updated)):
+                    need_offset_updated[i][3] = new_offset
+                final_list += need_offset_updated
+                need_offset_updated.clear()
+            else:
+                need_offset_updated.append([int(split[0]), int(split[1]), split[2], -1])
+
+            cur_offset = new_offset
+            bar.update(1)
+        # The final addition
+        for i in range(len(need_offset_updated)):
+            need_offset_updated[i][3] = cur_offset
+        final_list += need_offset_updated
+        return final_list
+
+
+def find_article_within_stream(stream: str, id: int):
+    # Parse all to xtml
+    root = etree.fromstring("<root>" + stream + "</root>")
+    xpath_expr = f".//page[id='{id}']"
+    return etree.tostring(root.xpath(xpath_expr)[0]).decode("utf-8")
 
 
 if __name__ == "__main__":
+    """
+    Only really built for small fractions of the data
+    """
     args = argsies()
 
-    find_article(args.bz2_loc, 553, 247, "AbeceDarians")
+    # random.seed(time())
+    #
+    # with open("./.cache/lineoffsets.dat", "rb") as f:
+    #     num_lines = count_lines(f)
+    # samples = random.sample(range(num_lines), 2)
+    # print(f"Sampling {samples}")
+    #
+    # # Sort them out
+    # samples.sort()
+    #
+    # # Test
+    # idx_file = pickle.load(open("./.cache/lineoffsets.dat", "rb"))
 
-    exit()
-
-    # # Lets first load and test the picle
-    # with open(args.cachedir + "/index.pkl", "rb") as f:
-    #     index = pickle.load(f)
-    # print(f"Sampled index {index}")
+    dump_file = open(
+        "/home/ottersome/Datasets/enwiki-20240620-pages-articles-multistream.xml.bz2",
+        "rb",
+    )
 
     # Create a keyboard interrupt handler
     signal.signal(signal.SIGINT, keyboard_interrupt_handler)
-    if args.mode == "extract":
-        bz2_file_path = args.bz2_loc
-        global index
-        print(f"Using file {bz2_file_path}. This *will* take a while")
-        # index = create_offsets_index(bz2_file_path)
-        # First Create the block offset map for future use
-        bom = create_block_offsets_map(bz2_file_path, args.block_offset_map_cache)
-        print("About to calculate index")
-        index = create_page_index(bz2_file_path, bom)
 
-    elif args.mode == "sample":
-        with open(args.cachedir + "/index.pkl", "rb") as f:
-            id_offset_dict = pickle.load(f)
-            # Also look for block offset map
-            assert os.path.exists(
-                args.block_offset_map_cache
-            ), f"Block offset map not found at {args.block_offset_map_cache}"
-            bom = pickle.load(open(args.block_offset_map_cache, "rb"))
-            sample_id = random.choice(list(id_offset_dict.keys()))
-            print(f"Sampling index {sample_id} from file")
-            data = seek_and_read(args.bz2_loc, sample_id, id_offset_dict, bom)
-            print(data)
+    offset_info = []
+
+    num_lines = count_lines(open(args.index_file))
+    print(f"Found {num_lines} lines in the index file")
+    if os.path.exists(args.lineoffset_cache):
+        print(f"Found line offset cache at {args.lineoffset_cache}")
+        with open(args.lineoffset_cache, "rb") as f:
+            offset_info = pickle.load(f)
+    else:
+        print(
+            f"No line offset cache found at {args.lineoffset_cache}. This might take a while..."
+        )
+        offset_info = get_line_offsets(args.index_file)
+        print(f"Saving line offset cache at {args.lineoffset_cache}")
+        pickle.dump(offset_info, open(args.lineoffset_cache, "wb"))
+
+    if args.sampling_amount is None:
+        print(f"Sampling {args.sampling_fraction} fraction of the data")
+        samples = random.sample(range(num_lines), args.sampling_fraction * num_lines)
+    else:
+        print(f"Sampling {args.sampling_amount} articles")
+        samples = random.sample(range(num_lines), args.sampling_amount)
+    # Sort them out
+    samples.sort()
+
+    # We then read the articlers
+    print(f"We will read {len(samples)} articles...")
+    for s in samples:
+        oi = offset_info[s]  # type: ignore
+        print(f"Reading with title {oi[2]} at ofset {oi[0]}")
+        data = find_article(
+            args.bz2_loc,
+            oi[0],
+            oi[3],
+            oi[1],
+        )
+
+        print(data)
+        # print(f"Sampling index {sample_id} from file")
