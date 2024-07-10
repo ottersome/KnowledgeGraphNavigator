@@ -141,16 +141,18 @@ def get_line_offsets(file_path: str) -> List[Tuple[int, int, str, int]]:
                     need_offset_updated[i][3] = new_offset
                 final_list += need_offset_updated
                 need_offset_updated.clear()
-            else:
-                need_offset_updated.append([int(split[0]), int(split[1]), split[2], -1])
 
+            need_offset_updated.append([int(split[0]), int(split[1]), split[2], -1])
             cur_offset = new_offset
             bar.update(1)
         # The final addition
         for i in range(len(need_offset_updated)):
             need_offset_updated[i][3] = cur_offset
         final_list += need_offset_updated
-        return final_list
+    assert (
+        len(final_list) == line_count
+    ), f"Length of final list is not equal to line count but rather {len(final_list)}"
+    return final_list
 
 
 def find_article_within_stream(stream: str, id: int) -> ET.Element:
