@@ -100,14 +100,9 @@ def find_article(
         # Check EOF
         # Seek to the start of the compressed stream
         f.seek(stream_offset)
-        print(
-            f"Given current offset is {stream_offset} and next offset is {next_stream_offset}"
-        )
-        print(f"Reading {next_stream_offset - stream_offset} bytes")
         article_binary = f.read(next_stream_offset - stream_offset)
 
         # Decompress the stream from the current file position
-        print(f"Decompressing {len(article_binary)} bytes")
         decompressed_data = bz2.decompress(article_binary)
 
         # Convert bytes to string for processing
@@ -224,16 +219,15 @@ if __name__ == "__main__":
     # We then read the articles
     print(f"We will read {total_samples} articles...")
     # We will export this all as a readable csv format
-    output_size_so_far = 0
     bar = tqdm(total=total_samples, desc="Exporting articles")
     sampled_sofar = 0
     byte_limit = args.output_size_limit * 1024 * 1024
+    skips_counter = 0
     while sampled_sofar < total_samples:
         # TODO: Make it sample without replacement
         s = random.sample(range(num_lines), 1)[0]
 
         oi = offset_info[s]  # type: ignore
-        print(f"Reading with title {oi[2]} at ofset {oi[0]}")
         data: ET.Element = find_article(args.bz2_loc, oi[0], oi[3], oi[1])
 
         # If no text available then skip
@@ -246,32 +240,28 @@ if __name__ == "__main__":
             or title_el in ["", None]
             or id_el in ["", None]
         ):
-            print(
-                f"Skipping {id_el if id_el is None else id_el.text} with title {title_el if title_el is None else title_el.text}"
-            )
+            skips_counter += 1
             continue
 
         id = id_el.text if id_el is not None else None
         title = title_el.text if title_el is not None else None
         text_el = text_el.text if text_el is not None else None
 
-        bar.update(1)
-
-        print(f"Saving {id} with title {title} and text")
-
         writer.writerow([id, title, text_el])
 
-        output_size_so_far += os.path.getsize(args.sample_output_path)
+        output_size_so_far = os.path.getsize(args.sample_output_path)
         bar.set_description(
-            f"Exporting articles. Output size so far {output_size_so_far/1e6:.2f} MB"
+            f"Exporting articles. Output size so far {output_size_so_far/1e6:.2f} MB\n"
+            f"Exported {id} with title {title}\n"
+            f"Have skipped {skips_counter} articles\n"
         )
+        bar.update(1)
         if output_size_so_far > byte_limit:
             print("Output size limit exceeded. Exiting...")
             print(f"Output size so far is {output_size_so_far}")
             print("Output is saved at {args.sample_output_path}")
             break
         sampled_sofar += 1
-        os.system("clear")
 
     # Close the file
     print(f"Done exporting articles to {args.sample_output_path}")
