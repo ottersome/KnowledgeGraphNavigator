@@ -21,6 +21,7 @@ lxml = "^5.2.2"
 
 [tool.poetry.group.extras.dependencies]
 ipython = "8.18.1"
+rich = "^13.7.1"
 
 [build-system]
 requires = ["poetry-core"]
