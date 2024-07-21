@@ -164,9 +164,9 @@ def pretty_print_element(element):
 
 def passes_criteria(article_body: Union[ET.Element, None]):
     # Criteria on length
-    if article_body is None:
+    if article_body is None or article_body.text is None:
         return False
-    assert article_body.text is not None, "Text is None"
+    # assert article_body.text is not None, "Text is None"
     if len(article_body.text) < 100:
         return False
     return True

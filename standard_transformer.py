@@ -29,8 +29,8 @@ logger = create_logger("MAIN")
 
 def argsies():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dataset_name", default="manu/project_gutenberg")
     # Hyperparameters
+    ap.add_argument("--dataset_name", default="manu/project_gutenberg")
     ap.add_argument("--epochs", default=10)
     ap.add_argument("--batch_size", default=16, type=int)
     ap.add_argument("--model_name", default="facebook/bart-base")
@@ -43,7 +43,7 @@ def argsies():
     ap.add_argument("--dropout_rate", default=0.1)
     ap.add_argument("--masking_percentage", default=0.1)
     ap.add_argument("--raw_ds_location", default="./data/raw/")
-    ap.add_argument("--seed", default=42,type=int)
+    ap.add_argument("--seed", default=42, type=int)
 
     ap.add_argument("--chkpnt_loc", default="./checkpoints", type=str)
 
@@ -53,6 +53,7 @@ def argsies():
     ap.add_argument("--wr_notes", help="Wand Run Notes", type=str)
 
     return ap.parse_args()
+
 
 def set_all_seeds(seed):
     torch.manual_seed(seed)
@@ -164,6 +165,7 @@ if __name__ == "__main__":
         enable_checkpointing=True,
         callbacks=[checkpoint_callback],
     )
+
     # TODO: its having some problems right now
     # tuner = Tuner(trainer)
     # tuner.scale_batch_size(
@@ -172,9 +174,13 @@ if __name__ == "__main__":
     #     val_dataloaders=val_dl,
     #     mode="binsearch",
     # )
+    logger.info("Tahts okaa")
 
     logger.info("Starting to train the model")
-    trainer.fit(lightning_module, train_dl, val_dl,ckpt_path="./checkpoints/epoch=0-step=2330.ckpt")
-
+    trainer.fit(
+        lightning_module,
+        train_dl,
+        val_dl,
+        ckpt_path="./checkpoints/epoch=0-step=2330.ckpt",
+    )
     exit()
-
