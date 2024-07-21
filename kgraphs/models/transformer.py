@@ -1,7 +1,8 @@
 import math
+from typing import Tuple
 
 import torch
-from torch import nn
+from torch import Tensor, nn
 from torch.nn.modules.sparse import Embedding
 
 from kgraphs.utils.logging import create_logger
@@ -75,7 +76,11 @@ class PositionalEncoding(nn.Module):
         self.register_buffer("pe", pe.unsqueeze(0))
 
     def forward(self, x):
-        return x + self.pe
+        max_length = x.shape[1]
+        self.logger.debug(
+            f"Positional Encoding is called with x of shape {x.shape} and pe of shape {self.pe.shape}"
+        )
+        return x + self.pe[:, :max_length, :]
 
 
 class EncoderLayer(nn.Module):
@@ -152,22 +157,8 @@ class Transformer(nn.Module):
         self.fc = nn.Linear(d_model, tgt_vocab_size)
         self.dropout = nn.Dropout(dropout)
 
-    def generate_mask(self, src: torch.Tensor, tgt: torch.Tensor):
-        # src_mask : (batch_len x seq_len) -> (batch_len x 1 x 1       x seq_len)
-        src_mask = (src != self.padding_id).unsqueeze(1).unsqueeze(2)
-        # tgt_mask : (batch_len x seq_len) -> (batch_len x 1 x seq_len x 1)
-        tgt_mask = (tgt != self.padding_id).unsqueeze(1).unsqueeze(3)
-        seq_length = tgt.size(1)
-        nopeak_mask = (
-            (1 - torch.triu(torch.ones(1, seq_length, seq_length), diagonal=1))
-            .bool()
-            .to(src.device)
-        )
-        tgt_mask = tgt_mask & nopeak_mask
-        return src_mask, tgt_mask
-
     def forward(self, src, tgt):
-        src_mask, tgt_mask = self.generate_mask(src, tgt)
+        src_mask, tgt_mask = generate_sequence_masks(src, tgt, self.padding_id)
         src_embedded = self.dropout(
             self.positional_encoding(self.encoder_embedding(src))
         )
@@ -188,3 +179,54 @@ class Transformer(nn.Module):
 
         output = self.fc(dec_output)
         return output
+
+
+def generate_sequence_masks(
+    src: torch.Tensor, tgt: torch.Tensor, padding_id: int
+) -> Tuple[Tensor, Tensor]:
+    # src_mask : (batch_len x seq_len) -> (batch_len x 1 x 1       x seq_len)
+    src_mask = (src != padding_id).unsqueeze(1).unsqueeze(2)
+    # tgt_mask : (batch_len x seq_len) -> (batch_len x 1 x seq_len x 1)
+    tgt_mask = (tgt != padding_id).unsqueeze(1).unsqueeze(3)
+    seq_length = tgt.size(1)
+    nopeak_mask = (
+        (1 - torch.triu(torch.ones(1, seq_length, seq_length), diagonal=1))
+        .bool()
+        .to(src.device)
+    )
+    tgt_mask = tgt_mask & nopeak_mask
+    return src_mask, tgt_mask
+
+
+def generate_srcsequence_masks_fortorch(
+    src: torch.Tensor, padding_id: int, num_heads: int
+) -> Tensor:
+    # CHECK: Just make sure its correct, the entire function
+    print(f"Src shape pre-unsqueeze is {src.shape}. Num Heads is {num_heads}")
+    src_mask = (src != padding_id).unsqueeze(1).unsqueeze(2)
+    src_mask = src_mask.repeat(1, num_heads, src.shape[1], 1).view(
+        src.shape[0] * num_heads, src.shape[1], src.shape[1]
+    )
+    print(f"Src shape post-unsqueeze is {src_mask.shape}")
+    return src_mask
+
+    return src_mask
+
+
+def generate_srcsequence_masks(src: torch.Tensor, padding_id: int) -> Tensor:
+    print(f"Src shape pre-unsqueeze is {src.shape}")
+    src_mask = (src != padding_id).unsqueeze(1).unsqueeze(2)
+    print(f"Src shape post-unsqueeze is {src_mask.shape}")
+    return src_mask
+
+
+def generete_tgtsequence_masks(tgt: torch.Tensor, padding_id: int) -> Tensor:
+    tgt_mask = (tgt != padding_id).unsqueeze(1).unsqueeze(3)
+    seq_length = tgt.size(1)
+    nopeak_mask = (
+        (1 - torch.triu(torch.ones(1, seq_length, seq_length), diagonal=1))
+        .bool()
+        .to(tgt.device)
+    )
+    tgt_mask = tgt_mask & nopeak_mask
+    return tgt_mask
