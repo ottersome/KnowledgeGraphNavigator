@@ -210,8 +210,6 @@ def generate_srcsequence_masks_fortorch(
     print(f"Src shape post-unsqueeze is {src_mask.shape}")
     return src_mask
 
-    return src_mask
-
 
 def generate_srcsequence_masks(src: torch.Tensor, padding_id: int) -> Tensor:
     print(f"Src shape pre-unsqueeze is {src.shape}")

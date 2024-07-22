@@ -25,6 +25,12 @@ def create_logger(name, level=logging.INFO):
     return logger
 
 
+def close_loggers(logger: logging.Logger):
+    for handler in logger.handlers:
+        handler.close()
+        logger.removeHandler(handler)
+
+
 def time_to_largest_unit(time_ts: float) -> Tuple[float, str]:
     """
     Takes seconds and converts it to largest possible unit

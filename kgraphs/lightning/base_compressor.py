@@ -32,11 +32,18 @@ class BaseCompressor(L.LightningModule):
         self.my_logger.info(f"Tryign to get somewhere within this")
         target = batch
         target = target.to(torch.long)
+        target_flat = target.flatten()
 
         recovered_text = self.model(target)
+        recovered_text_flat = recovered_text.view(-1, recovered_text.shape[2])
 
         # TODO: Ensure that the loss tries to minimize the number of embeddings from the first decoder
-        loss = self.criterium(recovered_text, target)
+        self.my_logger.debug(
+            f"Target flattened is of shape {target_flat.shape}"
+            f" and recovered text flattened is of shape {recovered_text_flat.shape}"
+        )
+
+        loss = self.criterium(recovered_text_flat, target_flat)
 
         return loss
 

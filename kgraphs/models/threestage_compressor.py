@@ -75,7 +75,6 @@ class NonParallelDecoder(TransformerDecoder):
                 memory_is_causal=memory_is_causal,
             )
 
-        print(f"Output is of shape {output.shape}")
         if self.norm is not None:
             output = self.norm(output)
 
@@ -92,6 +91,7 @@ class ThreeStageCompressor(nn.Module):
     BIAS = True
     MAX_SEQ_LENGTH = 1024
     TERMINATION_THRESHOLD = 1
+    MAX_DOCENC_LENGTH = 128
 
     def __init__(
         self,
@@ -155,9 +155,15 @@ class ThreeStageCompressor(nn.Module):
         src_mask = generate_srcsequence_masks_fortorch(
             src_tokens, self.padding_id, num_heads
         )
+        self.logger.debug(
+            f"src_mask is of shape {src_mask.shape} with device {src_mask.device}"
+        )
         enc_embedding = self.encoder_embedding(src_tokens)
         self.logger.debug(f"Embedded src is of shape {enc_embedding.shape}")
         inp_embedding = self.dropout(self.positional_encoding(enc_embedding))
+        self.logger.debug(
+            f"Inp embedding is of shape {inp_embedding.shape} with device {inp_embedding.device}"
+        )
 
         # TODO: Ensure the masks are correct
         self.logger.debug(f"src_mask is of shape {src_mask.shape}")
@@ -171,36 +177,83 @@ class ThreeStageCompressor(nn.Module):
             .unsqueeze(1)
             .repeat(context_embeddings.shape[0], 1, 1)
         ).to(context_embeddings.device)
+        results = [[] for i in range(context_embeddings.shape[0])]
         finished = [None] * context_embeddings.shape[0]
         eos_point = torch.zeros(self.d_model).to(context_embeddings.device)
+        current_ids_to_work = set(range(context_embeddings.shape[0]))
 
         # TODO: Enforce use of EOS token with some sort of regularization
         # Non Parallel Decoder
-        while len(tgt) > 0:  # Check length means amount of items
+        batchmax_length = 0
+        while (
+            len(current_ids_to_work) > 0 and batchmax_length < self.MAX_DOCENC_LENGTH
+        ):  # Check length means amount of items
             self.logger.debug(
                 f"Current tgt is of shape {tgt.shape} shape of memory is {context_embeddings.shape}"
             )
             # CHECK: Must we place something in between?
+
+            # Get the computation
             compressed_enc = self.st2(tgt=tgt, memory=context_embeddings).squeeze()
             self.logger.debug(f"Compressed enc is of shape {compressed_enc.shape}")
-            # Check how many compressed closes to eos
+
+            # Check distance of output to eos
             dist_to_eos = torch.abs(
                 compressed_enc
                 - eos_point.unsqueeze(0)
                 .unsqueeze(1)
                 .repeat(compressed_enc.shape[0], 1, 1)
             ).sum()
-            # Check for indx whos dist is less than threshold
+            # CHECK: Adding is correspondent
+            for i, ciw in enumerate(current_ids_to_work):
+                results[ciw].append(compressed_enc[i])
+
+            # Once added check if we have finished
             idxs_to_remove = torch.where(dist_to_eos < self.TERMINATION_THRESHOLD)[0]
-            self.logger.debug(f"Found {len(idxs_to_remove)} close to eos")
-            for idx in idxs_to_remove:
-                tgt[idx] = compressed_enc[idx]
-                finished[idx] = compressed_enc[idx]
+            for trm in idxs_to_remove:
+                self.logger.debug(f"Removing {trm}")
+                if trm in current_ids_to_work:
+                    current_ids_to_work.remove(trm)
 
-        compressed_tensor = torch.stack(encoded_seq)
+            self.logger.debug(
+                f"At length {batchmax_length} Current ids to work are {current_ids_to_work}"
+            )
+            batchmax_length += 1
+
+        self.logger.debug(f"Out of the loop with a max length of {batchmax_length}")
+        # Create a padded tensor from results
+        compdoc_padded = torch.zeros((len(results), batchmax_length, self.d_model)).to(
+            context_embeddings.device
+        )
+        compdoc_padded_mask = torch.zeros((len(results), batchmax_length)).to(
+            context_embeddings.device
+        )
+        self.logger.debug(
+            f"Compdoc padded is of shape {compdoc_padded.shape} and compdoc_padded_mask is of shape {compdoc_padded_mask.shape}\n"
+            f"With devices {compdoc_padded.device} and {compdoc_padded_mask.device}"
+        )
+        # CHECK: That the tensors are maintaining computation graph
+        for i, res in enumerate(results):
+            compdoc_padded[i, : len(res)] = torch.stack(res)
+            compdoc_padded_mask[i, : len(res)] = 1
+
         # We are reconstructing so we are taking the src tokens as the tgt
-        decoded_text = self.st3(compressed_tensor, src_tokens)
-        # CHECK: Must we place something in between?
-        final_text = self.vocab_layer(decoded_text)
-
+        # CHECK: Do we need to provide the mask for source?
+        self.logger.debug(
+            f"The dimensions for tgt are {src_tokens.shape}, compdoc_padded are {compdoc_padded.shape}"
+            f" and compdoc_padded_mask are {compdoc_padded_mask.shape}"
+        )
+        # Just create a causal mask for inp_embedding
+        # tgt_mask = generate_srcsequence_masks_fortorch(
+        #     inp_embedding, self.padding_id, num_heads
+        # )
+        decoded_text = self.st3(
+            tgt=inp_embedding,
+            tgt_mask=src_mask,  # Self attention
+            memory=compdoc_padded,
+            # memory_mask=compdoc_padded_mask,  # Cross Attention
+        )
+        self.logger.debug(f"Decoded text is of shape {decoded_text.shape}")
+        final_text = self.vocab_layer(decoded_text).squeeze()
+        self.logger.debug(f"Final text is of shape {final_text.shape}")
         return final_text

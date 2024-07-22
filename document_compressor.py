@@ -17,7 +17,7 @@ from transformers import BartModel, BartTokenizer
 
 from kgraphs.lightning.base_compressor import BaseCompressor
 from kgraphs.models.threestage_compressor import ThreeStageCompressor
-from kgraphs.utils.logging import create_logger
+from kgraphs.utils.logging import close_loggers, create_logger
 
 
 def argies():
@@ -228,3 +228,4 @@ def main():
 if __name__ == "__main__":
     logger = create_logger("__MAIN__")
     main()
+    close_loggers(logger)
