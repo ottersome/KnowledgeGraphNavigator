@@ -25,7 +25,7 @@ def argies():
     ap.add_argument("-e", "--epochs", type=int, default=2)
     ap.add_argument("-b", "--batch_size", type=int, default=2)
     ap.add_argument(
-        "-d", "--dataset", default="./data/wiki_dump.csv", help="Dataset Location"
+        "-d", "--dataset", default="./data/wikitext_dump.csv", help="Dataset Location"
     )
     ap.add_argument(
         "-c",
