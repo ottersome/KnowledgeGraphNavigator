@@ -203,7 +203,7 @@ def generate_srcsequence_masks_fortorch(
 ) -> Tensor:
     # CHECK: Just make sure its correct, the entire function
     print(f"Src shape pre-unsqueeze is {src.shape}. Num Heads is {num_heads}")
-    src_mask = (src != padding_id).unsqueeze(1).unsqueeze(2)
+    src_mask = (src == padding_id).unsqueeze(1).unsqueeze(2)
     src_mask = src_mask.repeat(1, num_heads, src.shape[1], 1).view(
         src.shape[0] * num_heads, src.shape[1], src.shape[1]
     )
