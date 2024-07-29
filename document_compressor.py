@@ -220,6 +220,8 @@ def main():
         padding_id=tokenizer.pad_token_id,
         eos_id=tokenizer.eos_token_id,
     )
+    amnt_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    logger.info(f"The amount of parameters in our three stage compressor {amnt_params}")
     lightning_module = BaseCompressor(model, tokenizer, args.lr)
 
     logger.info("Starting to train the model")

@@ -3,6 +3,7 @@ from typing import Tuple
 import lightning as L
 import torch
 import torch.nn as nn
+import pdb
 import torch.nn.functional as F
 from torch import Tensor
 from transformers import BartTokenizer
@@ -34,7 +35,15 @@ class BaseCompressor(L.LightningModule):
         target = target.to(torch.long)
         target_flat = target.flatten()
 
+        
+        # DEBUG: Amount of VRam being Used
+        amnt_vram = torch.cuda.memory_allocated(target.device) / 1e9
+        self.my_logger.info(f"Using {amnt_vram: .2f} GB of VRam before the model is called")
+        pdb.set_trace()
         recovered_text = self.model(target)
+        # DEBUG: Amount of VRam being Used
+        amnt_vram = torch.cuda.memory_allocated(recovered_text.device) / 1e9
+        self.my_logger.info(f"Using {amnt_vram: .2f} GB of VRam after the model is called")
         recovered_text_flat = recovered_text.view(-1, recovered_text.shape[2])
 
         # TODO: Ensure that the loss tries to minimize the number of embeddings from the first decoder
@@ -43,9 +52,17 @@ class BaseCompressor(L.LightningModule):
             f" and recovered text flattened is of shape {recovered_text_flat.shape}"
         )
 
+        self.my_logger.info(f"Using {amnt_vram: .2f} GB of VRam before the loss is calculated")
+        pdb.set_trace()
         loss = self.criterium(recovered_text_flat, target_flat)
+        self.my_logger.info(f"Using {amnt_vram: .2f} GB of VRam after the loss is calculated")
+        pdb.set_trace()
         self.my_logger.debug(f"Non avg loss shape is {loss.shape}")
+        # DEBUG: Amount of VRam being Used
+        amnt_vram = torch.cuda.memory_allocated(loss.device) / 1e9
         loss_avg = loss.mean()
+        # DEBUG: Amount of VRam being Used
+        amnt_vram = torch.cuda.memory_allocated(loss_avg.device) / 1e9
         self.my_logger.debug(f"Loss is {loss_avg.item()}")
         self.log("train_loss", loss_avg.item())
         return loss_avg

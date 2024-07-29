@@ -12,6 +12,7 @@ from torch.nn import functional as F
 from torch.nn.modules.transformer import _detect_is_causal_mask, _get_seq_len
 
 from kgraphs.utils.logging import create_logger
+import pdb
 
 from .transformer import PositionalEncoding, generate_srcsequence_masks_fortorch
 
@@ -173,10 +174,19 @@ class ThreeStageCompressor(nn.Module):
         self.logger.debug(f"Inp embedding is of shape {inp_embedding.shape}")
         self.logger.debug(f"Inp embedding content: {inp_embedding}")
 
+        # Amount of VRam being Used
+        amnt_vram = torch.cuda.memory_allocated(inp_embedding.device) / 1e9
+        self.logger.info(f"Using {amnt_vram: .2f} GB of VRam before st1 is called")
+
+
         # TODO: Ensure the masks are correct
         self.logger.debug(f"src_mask is of shape {src_mask.shape}")
         self.logger.debug(f"src_mask is of values {src_mask[0,0,1]}")
         context_embeddings = self.st1(inp_embedding, src_mask)
+
+        # Amount of VRam being Used
+        amnt_vram = torch.cuda.memory_allocated(context_embeddings.device) / 1e9
+        self.logger.info(f"Using {amnt_vram: .2f} GB of VRam after st1 is called")
 
         self.logger.debug(f"context embeddings is of shape {context_embeddings.shape}")
         self.logger.debug(f"context embeddings is of values {context_embeddings[0,0,1]}")
@@ -186,8 +196,12 @@ class ThreeStageCompressor(nn.Module):
             torch.zeros(self.d_model)
             .unsqueeze(0)
             .unsqueeze(1)
-            .repeat(context_embeddings.shape[0], 1, 1)
+            # DEBUG: Lets start with just 10 outputs.
+            # Then we change when we canthink of information maximization
+            .repeat(context_embeddings.shape[0], 10, 1)
         ).to(context_embeddings.device)
+        self.logger.debug(f"tgt is of shape {tgt.shape}")
+
         self.logger.debug(f"context_embeddings is of shape {context_embeddings.shape}")
         self.logger.debug(f"context_embeddings content: {context_embeddings}")
         results = [[] for i in range(context_embeddings.shape[0])]
@@ -198,40 +212,68 @@ class ThreeStageCompressor(nn.Module):
         # TODO: Enforce use of EOS token with some sort of regularization
         # Non Parallel Decoder
         batchmax_length = 0
-        while (
-            len(current_ids_to_work) > 0 and batchmax_length < self.MAX_DOCENC_LENGTH
-        ):  # Check length means amount of items
+        # DEBUG: Remove the 10 and change it to be dynamic
+        for i in range(9):
             self.logger.debug(
-                f"Current tgt is of shape {tgt.shape} shape of memory is {context_embeddings.shape}"
+                f"({batchmax_length}/{self.MAX_DOCENC_LENGTH}) Current tgt is of shape {tgt.shape} shape of memory is {context_embeddings.shape}"
             )
             # CHECK: Must we place something in between?
 
+            # DEBUG: Amount of VRam being Used
+            amnt_vram = torch.cuda.memory_allocated(context_embeddings.device) / 1e9
+            self.logger.info(f"Using {amnt_vram: .2f} GB of VRam before st2")
+
             # Get the computation
-            compressed_enc = self.st2(tgt=tgt, memory=context_embeddings).squeeze()
+            targeto = tgt[:,i,:][:,None,:]
+            self.logger.debug(f"Targeto is of shape {targeto.shape}")
+            compressed_enc = self.st2(tgt=targeto, memory=context_embeddings).view(targeto.shape[0],-1, targeto.shape[-1])
             self.logger.debug(f"Compressed enc is of shape {compressed_enc.shape}")
 
             # Check distance of output to eos
-            dist_to_eos = torch.abs(
-                compressed_enc
-                - eos_point.unsqueeze(0)
-                .unsqueeze(1)
-                .repeat(compressed_enc.shape[0], 1, 1)
-            ).sum()
-            # CHECK: Adding is correspondent
-            for i, ciw in enumerate(current_ids_to_work):
-                results[ciw].append(compressed_enc[i])
-
-            # Once added check if we have finished
-            idxs_to_remove = torch.where(dist_to_eos < self.TERMINATION_THRESHOLD)[0]
-            for trm in idxs_to_remove:
-                self.logger.debug(f"Removing {trm}")
-                if trm in current_ids_to_work:
-                    current_ids_to_work.remove(trm)
-
-            self.logger.debug(
-                f"At length {batchmax_length} Current ids to work are {current_ids_to_work}"
-            )
-            batchmax_length += 1
+            tgt[:,:i+1,:] = compressed_enc[:,-1,:][:,None,:]
+        # while (
+        #     len(current_ids_to_work) > 0 and batchmax_length < self.MAX_DOCENC_LENGTH
+        # ):  # Check length means amount of items
+            #
+            # self.logger.debug(
+            #     f"({batchmax_length}/{self.MAX_DOCENC_LENGTH}) Current tgt is of shape {tgt.shape} shape of memory is {context_embeddings.shape}"
+            # )
+            # # CHECK: Must we place something in between?
+            #
+            # # DEBUG: Amount of VRam being Used
+            # amnt_vram = torch.cuda.memory_allocated(context_embeddings.device) / 1e9
+            # self.logger.info(f"Using {amnt_vram: .2f} GB of VRam before st2")
+            # 
+            # # Get the computation
+            # compressed_enc = self.st2(tgt=tgt, memory=context_embeddings).squeeze()
+            # self.logger.debug(f"Compressed enc is of shape {compressed_enc.shape}")
+            #
+            # # Check distance of output to eos
+            # dist_to_eos = torch.abs(
+            #     compressed_enc
+            #     - eos_point.unsqueeze(0)
+            #     .unsqueeze(1)
+            #     .repeat(compressed_enc.shape[0], 1, 1)
+            # ).sum()
+            # # CHECK: Adding is correspondent
+            # for i, ciw in enumerate(current_ids_to_work):
+            #     results[ciw].append(compressed_enc[i,]])
+            #
+            # # Once added check if we have finished
+            # idxs_to_remove = torch.where(dist_to_eos < self.TERMINATION_THRESHOLD)[0]
+            # for trm in idxs_to_remove:
+            #     self.logger.debug(f"Removing {trm}")
+            #     if trm in current_ids_to_work:
+            #         current_ids_to_work.remove(trm)
+            #
+            # self.logger.debug(
+            #     f"At length {batchmax_length} Current ids to work are {current_ids_to_work}"
+            # )
+            # batchmax_length += 1
+            #
+        # DEBUG: Amount of VRam being Used
+        amnt_vram = torch.cuda.memory_allocated(context_embeddings.device) / 1e9
+        self.logger.info(f"Using {amnt_vram: .2f} GB of VRam after the loop")
 
         self.logger.debug(f"Out of the loop with a max length of {batchmax_length}")
         # Create a padded tensor from results
@@ -245,10 +287,11 @@ class ThreeStageCompressor(nn.Module):
             f"Compdoc padded is of shape {compdoc_padded.shape} and compdoc_padded_mask is of shape {compdoc_padded_mask.shape}\n"
             f"With devices {compdoc_padded.device} and {compdoc_padded_mask.device}"
         )
+        compdoc_padded = tgt
         # CHECK: That the tensors are maintaining computation graph
-        for i, res in enumerate(results):
-            compdoc_padded[i, : len(res)] = torch.stack(res)
-            compdoc_padded_mask[i, : len(res)] = 1
+        # for i, res in enumerate(results):
+        #     compdoc_padded[i, : len(res)] = torch.stack(res)
+        #     compdoc_padded_mask[i, : len(res)] = 1
 
         # We are reconstructing so we are taking the src tokens as the tgt
         # CHECK: Do we need to provide the mask for source?
@@ -260,13 +303,25 @@ class ThreeStageCompressor(nn.Module):
         # tgt_mask = generate_srcsequence_masks_fortorch(
         #     inp_embedding, self.padding_id, num_heads
         # )
+
+        # DEBUG: Amount of VRam being Used
+        amnt_vram = torch.cuda.memory_allocated(context_embeddings.device) / 1e9
+        self.logger.info(f"Using {amnt_vram: .2f} GB of VRam b4 St3")
+
         decoded_text = self.st3(
             tgt=inp_embedding,
             tgt_mask=src_mask,  # Self attention
-            memory=compdoc_padded,
+            memory=tgt,
             # memory_mask=compdoc_padded_mask,  # Cross Attention
         )
+
+        # DEBUG: Amount of VRam being Used
+        amnt_vram = torch.cuda.memory_allocated(context_embeddings.device) / 1e9
+        self.logger.info(f"Using {amnt_vram: .2f} GB of VRam after St3")
+
         self.logger.debug(f"Decoded text is of shape {decoded_text.shape}")
         final_text = self.vocab_layer(decoded_text).squeeze()
         self.logger.debug(f"Final text is of shape {final_text.shape}")
+
+        self.logger.info(f"Final report of memory usage inside the model is {amnt_vram: .2f} GB")
         return final_text
