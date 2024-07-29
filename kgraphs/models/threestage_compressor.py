@@ -82,7 +82,7 @@ class NonParallelDecoder(TransformerDecoder):
 
 
 class ThreeStageCompressor(nn.Module):
-    DIM_FEEDFORWARD = 512
+    DIM_FEEDFORWARD = 1024
     DROPOUT = 0.1
     ACTIVATION = "relu"
     LAYER_NORM_EPS = 1e-5
@@ -160,15 +160,26 @@ class ThreeStageCompressor(nn.Module):
         )
         enc_embedding = self.encoder_embedding(src_tokens)
         self.logger.debug(f"Embedded src is of shape {enc_embedding.shape}")
+        # CHECK: Do we need dropout here?
         inp_embedding = self.dropout(self.positional_encoding(enc_embedding))
         self.logger.debug(
             f"Inp embedding is of shape {inp_embedding.shape} with device {inp_embedding.device}"
         )
+        # Lets ensure the embeddings are okay
+        self.logger.debug(f"embeddings are of shape {enc_embedding.shape}")
+        self.logger.debug(f"embeddings content: {enc_embedding}")
+
+        # What about droput here?
+        self.logger.debug(f"Inp embedding is of shape {inp_embedding.shape}")
+        self.logger.debug(f"Inp embedding content: {inp_embedding}")
 
         # TODO: Ensure the masks are correct
         self.logger.debug(f"src_mask is of shape {src_mask.shape}")
+        self.logger.debug(f"src_mask is of values {src_mask[0,0,1]}")
         context_embeddings = self.st1(inp_embedding, src_mask)
 
+        self.logger.debug(f"context embeddings is of shape {context_embeddings.shape}")
+        self.logger.debug(f"context embeddings is of values {context_embeddings[0,0,1]}")
         # Set (0,0,...,0) to EOS
         # TODO: Enssure we get the right dimension here
         tgt = (
@@ -177,6 +188,8 @@ class ThreeStageCompressor(nn.Module):
             .unsqueeze(1)
             .repeat(context_embeddings.shape[0], 1, 1)
         ).to(context_embeddings.device)
+        self.logger.debug(f"context_embeddings is of shape {context_embeddings.shape}")
+        self.logger.debug(f"context_embeddings content: {context_embeddings}")
         results = [[] for i in range(context_embeddings.shape[0])]
         finished = [None] * context_embeddings.shape[0]
         eos_point = torch.zeros(self.d_model).to(context_embeddings.device)
