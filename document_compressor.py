@@ -23,7 +23,7 @@ from kgraphs.utils.logging import close_loggers, create_logger
 def argies():
     ap = argparse.ArgumentParser()
     ap.add_argument("-e", "--epochs", type=int, default=2)
-    ap.add_argument("-b", "--batch_size", type=int, default=2)
+    ap.add_argument("-b", "--batch_size", type=int, default=8)
     ap.add_argument(
         "-d", "--dataset", default="./data/wikitext_dump.csv", help="Dataset Location"
     )
@@ -47,7 +47,12 @@ def argies():
     ap.add_argument("--nhead", default=8, type=int)
     # Wandb Stuff
     ap.add_argument("-w", "--wandb", action="store_true")
-    ap.add_argument("--wandb_project_name", help="Project name", type=str)
+    ap.add_argument(
+        "--wandb_project_name",
+        default="Document Compressor",
+        help="Project name",
+        type=str,
+    )
     ap.add_argument("--wr_name", help="Wand Run Name", type=str)
     ap.add_argument("--wr_notes", help="Wand Run Notes", type=str)
 
@@ -196,6 +201,7 @@ def main():
         enable_checkpointing=True,
         callbacks=[checkpoint_callback],
     )
+
     # TODO: its having some problems right now
     # tuner = Tuner(trainer)
     # tuner.scale_batch_size(
@@ -204,7 +210,6 @@ def main():
     #     val_dataloaders=val_dl,
     #     mode="binsearch",
     # )
-    logger.info(f"Using pretreined embedder with dimension {args.d_model}")
 
     model = ThreeStageCompressor(
         args.d_model,
