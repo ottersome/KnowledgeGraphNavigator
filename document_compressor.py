@@ -18,7 +18,11 @@ from transformers import BartModel, BartTokenizer
 from kgraphs.lightning.base_compressor import BaseCompressor
 from kgraphs.models.threestage_compressor import ThreeStageCompressor
 from kgraphs.utils.logging import close_loggers, create_logger
+import torch
+from rich import traceback
 
+torch.autograd.set_detect_anomaly(True)
+traceback.install()
 
 def argies():
     ap = argparse.ArgumentParser()

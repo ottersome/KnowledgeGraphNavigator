@@ -200,6 +200,7 @@ class ThreeStageCompressor(nn.Module):
             # Then we change when we canthink of information maximization
             .repeat(context_embeddings.shape[0], 10, 1)
         ).to(context_embeddings.device)
+        initial_tgt = torch.zeros(self.d_model).unsqueeze(0).unsqueeze(1).repeat(context_embeddings.shape[0], 10, 1).to(context_embeddings.device)
         self.logger.debug(f"tgt is of shape {tgt.shape}")
 
         self.logger.debug(f"context_embeddings is of shape {context_embeddings.shape}")
@@ -213,7 +214,8 @@ class ThreeStageCompressor(nn.Module):
         # Non Parallel Decoder
         batchmax_length = 0
         # DEBUG: Remove the 10 and change it to be dynamic
-        for i in range(9):
+        results = [initial_tgt]
+        for i in range(10):
             self.logger.debug(
                 f"({batchmax_length}/{self.MAX_DOCENC_LENGTH}) Current tgt is of shape {tgt.shape} shape of memory is {context_embeddings.shape}"
             )
@@ -224,13 +226,22 @@ class ThreeStageCompressor(nn.Module):
             self.logger.info(f"Using {amnt_vram: .2f} GB of VRam before st2")
 
             # Get the computation
-            targeto = tgt[:,i,:][:,None,:]
+            # targeto = tgt[:,:i+1,:].view(tgt.shape[0],-1, tgt.shape[-1])
+            # targeto will be equal to all results so far:
+            #TODO: Ensure that no grad is being computed for targeto
+            targeto = torch.cat(results, dim=1)
             self.logger.debug(f"Targeto is of shape {targeto.shape}")
             compressed_enc = self.st2(tgt=targeto, memory=context_embeddings).view(targeto.shape[0],-1, targeto.shape[-1])
             self.logger.debug(f"Compressed enc is of shape {compressed_enc.shape}")
 
             # Check distance of output to eos
-            tgt[:,:i+1,:] = compressed_enc[:,-1,:][:,None,:]
+            pdb.set_trace()
+            # tgt[:,:i+1,:] = compressed_enc[:,-1,:][:,None,:]
+            results.append(compressed_enc[:,-1,:][:,None,:])
+
+        #At the very end we calculate tgt based on the results
+        tgt = torch.cat(results, dim=1)
+
         # while (
         #     len(current_ids_to_work) > 0 and batchmax_length < self.MAX_DOCENC_LENGTH
         # ):  # Check length means amount of items
