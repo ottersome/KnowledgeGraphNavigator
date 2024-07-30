@@ -235,7 +235,6 @@ class ThreeStageCompressor(nn.Module):
             self.logger.debug(f"Compressed enc is of shape {compressed_enc.shape}")
 
             # Check distance of output to eos
-            pdb.set_trace()
             # tgt[:,:i+1,:] = compressed_enc[:,-1,:][:,None,:]
             results.append(compressed_enc[:,-1,:][:,None,:])
 
