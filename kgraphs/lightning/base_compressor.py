@@ -37,14 +37,7 @@ class BaseCompressor(L.LightningModule):
         target = target.to(torch.long)
         target_flat = target.flatten()
 
-        
-        # DEBUG: Amount of VRam being Used
-        amnt_vram = torch.cuda.memory_allocated(target.device) / 1e9
-        self.my_logger.info(f"Using {amnt_vram: .2f} GB of VRam before the model is called")
         recovered_text = self.model(target)
-        # DEBUG: Amount of VRam being Used
-        amnt_vram = torch.cuda.memory_allocated(recovered_text.device) / 1e9
-        self.my_logger.info(f"Using {amnt_vram: .2f} GB of VRam after the model is called")
         recovered_text_flat = recovered_text.view(-1, recovered_text.shape[2])
 
         # TODO: Ensure that the loss tries to minimize the number of embeddings from the first decoder
@@ -55,11 +48,6 @@ class BaseCompressor(L.LightningModule):
 
         self.my_logger.info(f"Using {amnt_vram: .2f} GB of VRam before the loss is calculated")
         loss = self.criterium(recovered_text_flat, target_flat)
-        self.my_logger.info(f"Using {amnt_vram: .2f} GB of VRam after the loss is calculated")
-        pdb.set_trace()
-        self.my_logger.debug(f"Non avg loss shape is {loss.shape}")
-        # DEBUG: Amount of VRam being Used
-        amnt_vram = torch.cuda.memory_allocated(loss.device) / 1e9
         loss_avg = loss.mean()
         # DEBUG: Amount of VRam being Used
         amnt_vram = torch.cuda.memory_allocated(loss_avg.device) / 1e9
@@ -68,24 +56,25 @@ class BaseCompressor(L.LightningModule):
         self.my_logger.info(f"TRAIIININGG STEP BOIII: EXIT")
         return loss_avg
 
-    # def validation_step(self, batch, batch_idx):
-    #     self.my_logger.info(f"VALIDATION STEP BOIII: ENTER")
-    #     self.my_logger.info(f"Performing validation for batch {batch_idx}")
-    #     target = batch
-    #     target = target.to(torch.long)
-    #     # target_flat = target.flatten()
-    #     recovered_text = self.model(target)
-    #     argmaxed_target = torch.argmax(target,dim=-1) 
-    #     detokenized = self.tokenizer.batch_decode(argmaxed_target)
-    #     # recovered_text_flat = recovered_text.view(-1, recovered_text.shape[2])
-    #
-    #     for b in range(recovered_text.shape[0]):
-    #         self.my_logger.debug(f"Detokenized looks like {detokenized}\n")
-    #         self.my_logger.debug(f"Target is {target[b]}")
-    #
-    #
-    #     self.my_logger.info(f"VALIDATION STEP BOIII: EXIT")
-    #     self.log("val_loss", 0)
+    def validation_step(self, batch, batch_idx):
+        if batch_idx == 0:
+            self.my_logger.info(f"VALIDATION STEP BOIII: ENTER")
+            self.my_logger.info(f"Performing validation for batch {batch_idx}")
+            target = batch
+            target = target.to(torch.long)
+            # target_flat = target.flatten()
+            inf_text = self.model(target)
+            argmaxed_inf = torch.argmax(inf_text,dim=-1) 
+            detokenized_inf = self.tokenizer.batch_decode(argmaxed_inf)
+            detokeniized_target = self.tokenizer.batch_decode(target)
+            # recovered_text_flat = recovered_text.view(-1, recovered_text.shape[2])
+
+            for b in range(target.shape[0]):
+                self.my_logger.debug(f"Target is:\n{detokeniized_target[b]}\n")
+                self.my_logger.debug(f"Inference is:\n{detokenized_inf[b]}\n")
+
+            self.my_logger.info(f"VALIDATION STEP BOIII: EXIT")
+            self.log("val_loss", 0)
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.model.parameters(), lr=self.lr)
