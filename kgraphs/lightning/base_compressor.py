@@ -1,6 +1,7 @@
 import lightning as L
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from transformers import BartTokenizer
 import torch.autograd
 
@@ -18,12 +19,14 @@ class BaseCompressor(L.LightningModule):
     ):
         super().__init__()
         self.model = compressor_model
+        assert tokenizer.pad_token_id is not None, "Tokenizer is expected to have a pad token"
         # self.criterium = torch.nn.CrossEntropyLoss()
         self.tokenizer = tokenizer
+        self.padding_id = tokenizer.pad_token_id
         self.masking_percentage = masking_percentage
         self.my_logger = create_logger(__class__.__name__)
         # TODO: Ensure criterium enforeces sparseness of compression
-        self.criterium = torch.nn.CrossEntropyLoss()
+        # self.criterium = torch.nn.CrossEntropyLoss()
         self.lr = lr
 
     def training_step(self, batch, batch_idx):
@@ -36,7 +39,8 @@ class BaseCompressor(L.LightningModule):
 
         # TODO: Ensure that the loss tries to minimize the number of embeddings from the first decoder
 
-        loss = self.criterium(recovered_text_flat, target_flat)
+        self.my_logger.debug(f"Amount of padding tokens in tarkget is {target_flat.eq(self.padding_id).sum()}")
+        loss = F.cross_entropy(recovered_text_flat, target_flat, ignore_index=self.padding_id, reduction='none')
         loss_avg = loss.mean()
         loss_avg_item = loss_avg.item()
         amnt_vram = torch.cuda.memory_allocated(loss_avg.device) / 1e9

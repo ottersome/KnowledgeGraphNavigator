@@ -5,11 +5,11 @@ while keeping the encoded sequences minimal.
 
 import argparse
 import ast
-import numpy as np
 import os
 from typing import Any
 
 import lightning as L
+import numpy as np
 import pandas as pd
 import torch
 import wandb
@@ -75,6 +75,18 @@ def argies():
 #                  num_workers=0, collate_fn=default_collate, pin_memory=False, drop_last=False,
 #                  timeout=0, worker_init_fn=None):
 #         super().__init__(dataset, batch_size, shuffle, sampler, batch_sampler, num_workers, collate_fn, pin_memory, drop_last, timeout, worker_init_fn)
+
+
+def wrap_data_collator(pad_token_id: int):
+    def data_collator(batch):
+        # Ensure that given batch is right paddes to the longest sequence
+        longest = max(len(x) for x in batch)
+        padded_batch = torch.full((len(batch), longest), pad_token_id, dtype=torch.long)
+        for i, seq in enumerate(batch):
+            padded_batch[i, : len(seq)] = torch.tensor(seq, dtype=torch.long)
+        return padded_batch
+
+    return data_collator
 
 
 def data_collator(batch):
@@ -156,15 +168,25 @@ class DataModule(L.LightningDataModule):
         )
 
     def train_dataloader(self):
+        assert (
+            self.tokenizer.pad_token_id is not None
+        ), "Tokenizer is expected to have a pad token"
         dataloader = DataLoader(
-            self.data_train, batch_size=self.batch_size, collate_fn=data_collator
+            self.data_train,
+            batch_size=self.batch_size,
+            collate_fn=wrap_data_collator(self.tokenizer.pad_token_id),
         )
         logger.info(f"Using dataloader with length {len(dataloader)}")
         return dataloader
 
     def val_dataloader(self):
+        assert (
+            self.tokenizer.pad_token_id is not None
+        ), "Tokenizer is expected to have a pad token"
         return DataLoader(
-            self.data_val, batch_size=self.batch_size, collate_fn=data_collator
+            self.data_val,
+            batch_size=self.batch_size,
+            collate_fn=wrap_data_collator(self.tokenizer.pad_token_id),
         )
 
 
