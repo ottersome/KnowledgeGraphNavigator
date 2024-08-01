@@ -92,6 +92,9 @@ class ThreeStageCompressor(nn.Module):
     TERMINATION_THRESHOLD = 1
     MAX_DOCENC_LENGTH = 128
 
+    # Temporary:
+    COMPRESSION_LENGTH = 20
+
     def __init__(
         self,
         d_model: int,
@@ -149,7 +152,6 @@ class ThreeStageCompressor(nn.Module):
         self.dropout = nn.Dropout(self.DROPOUT)
 
     def forward(self, src_tokens: Tensor):
-        # TODO: weight have to return encoded_text too.
         num_heads = self.encoder_layer.self_attn.num_heads
         src_mask = generate_srcsequence_masks_fortorch(
             src_tokens, self.padding_id, num_heads
@@ -165,13 +167,13 @@ class ThreeStageCompressor(nn.Module):
             .unsqueeze(1)
             # DEBUG: Lets start with just 10 outputs.
             # Then we change when we canthink of information maximization
-            .repeat(context_embeddings.shape[0], 10, 1)
+            .repeat(context_embeddings.shape[0], self.COMPRESSION_LENGTH, 1)
         ).to(context_embeddings.device)
         initial_tgt = (
             torch.zeros(self.d_model)
             .unsqueeze(0)
             .unsqueeze(1)
-            .repeat(context_embeddings.shape[0], 10, 1)
+            .repeat(context_embeddings.shape[0], self.COMPRESSION_LENGTH, 1)
             .to(context_embeddings.device)
         )
 
@@ -179,9 +181,9 @@ class ThreeStageCompressor(nn.Module):
         ## Non Parallel Decoder
         # TODO: IMPORTANT: Enforce use of EOS token with some sort of regularization
         batchmax_length = 0
-        # DEBUG: Remove the 10 and change it to be dynamic
+        # DEBUG: Remove the self.COMPRESSION_LENGTH and change it to be dynamic
         results = [initial_tgt]
-        for i in range(10):
+        for i in range(self.COMPRESSION_LENGTH):
             targeto = torch.cat(results, dim=1)
             compressed_enc = self.st2(tgt=targeto, memory=context_embeddings).view(
                 targeto.shape[0], -1, targeto.shape[-1]

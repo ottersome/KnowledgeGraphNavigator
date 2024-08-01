@@ -1,11 +1,6 @@
-from typing import Tuple
-
 import lightning as L
 import torch
 import torch.nn as nn
-import pdb
-import torch.nn.functional as F
-from torch import Tensor
 from transformers import BartTokenizer
 import torch.autograd
 
@@ -32,7 +27,6 @@ class BaseCompressor(L.LightningModule):
         self.lr = lr
 
     def training_step(self, batch, batch_idx):
-        self.my_logger.info(f"TRAIIININGG STEP BOIII: ENTER")
         target = batch
         target = target.to(torch.long)
         target_flat = target.flatten()
@@ -41,19 +35,14 @@ class BaseCompressor(L.LightningModule):
         recovered_text_flat = recovered_text.view(-1, recovered_text.shape[2])
 
         # TODO: Ensure that the loss tries to minimize the number of embeddings from the first decoder
-        self.my_logger.debug(
-            f"Target flattened is of shape {target_flat.shape}"
-            f" and recovered text flattened is of shape {recovered_text_flat.shape}"
-        )
 
-        self.my_logger.info(f"Using {amnt_vram: .2f} GB of VRam before the loss is calculated")
         loss = self.criterium(recovered_text_flat, target_flat)
         loss_avg = loss.mean()
-        # DEBUG: Amount of VRam being Used
+        loss_avg_item = loss_avg.item()
         amnt_vram = torch.cuda.memory_allocated(loss_avg.device) / 1e9
-        self.my_logger.debug(f"Loss is {loss_avg.item()}")
-        self.log("train_loss", loss_avg.item())
-        self.my_logger.info(f"TRAIIININGG STEP BOIII: EXIT")
+        self.my_logger.debug(f"Using {amnt_vram: .2f} GB of VRam after the loss is calculated")
+        self.my_logger.info(f"Loss is {loss_avg_item}")
+        self.log("train_loss", loss_avg_item)
         return loss_avg
 
     def validation_step(self, batch, batch_idx):

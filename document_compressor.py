@@ -44,7 +44,7 @@ def argies():
         default=".cache/ds_encoded.csv",
         help="Where to store the cached data",
     )
-    ap.add_argument("--lr", default=0.0001, type=float)
+    ap.add_argument("--lr", default=0.00001, type=float)
     # Model Architecture
     ap.add_argument("--num_layers", default=3, type=int)
     ap.add_argument("--d_model", default=768, type=int)
