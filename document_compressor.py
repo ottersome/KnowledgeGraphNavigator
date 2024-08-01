@@ -5,24 +5,28 @@ while keeping the encoded sequences minimal.
 
 import argparse
 import ast
+import numpy as np
 import os
+from typing import Any
 
 import lightning as L
 import pandas as pd
 import torch
+import wandb
+from lightning import Callback
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
+from rich import traceback
 from torch.utils.data import DataLoader
 from transformers import BartModel, BartTokenizer
 
 from kgraphs.lightning.base_compressor import BaseCompressor
 from kgraphs.models.threestage_compressor import ThreeStageCompressor
 from kgraphs.utils.logging import close_loggers, create_logger
-import torch
-from rich import traceback
 
 torch.autograd.set_detect_anomaly(True)
 traceback.install()
+
 
 def argies():
     ap = argparse.ArgumentParser()
@@ -164,6 +168,39 @@ class DataModule(L.LightningDataModule):
         )
 
 
+class BigBrother(Callback):
+    def __init__(self, wandb_logger: WandbLogger):
+        self.wandb_logger = wandb_logger
+        self.writer = create_logger(__class__.__name__)
+        self.params_store = []
+
+    def on_train_batch_end(
+        self,
+        trainer: L.Trainer,
+        pl_module: L.LightningModule,
+        outputs,
+        batch: Any,
+        batch_idx: int,
+    ):
+        assert isinstance(pl_module, BaseCompressor)
+        first_encoder = pl_module.model.st1
+        all_weights = []
+        for p in first_encoder.parameters():
+            all_weights.append(p.detach().cpu().flatten())
+            # Histogram of weights:
+        final_weights = torch.cat(all_weights, dim=0).flatten().numpy()
+        if self.wandb_logger is not None:
+            self.wandb_logger.experiment.log(
+                {"first_encoder": wandb.Histogram(final_weights, num_bins=100)}
+            )
+        if len(self.params_store) > 0:
+            difference = np.sum(np.abs(self.params_store - final_weights))
+            self.writer.debug(f"Difference is {difference}")
+        self.params_store = final_weights
+
+        self.writer.debug(f"Params of first encoder is {len(final_weights)}")
+
+
 def main():
     args = argies()
 
@@ -203,7 +240,7 @@ def main():
         val_check_interval=0.05,
         log_every_n_steps=1,
         enable_checkpointing=True,
-        callbacks=[checkpoint_callback],
+        callbacks=[checkpoint_callback, BigBrother(wandb_logger)],
     )
 
     # TODO: its having some problems right now
